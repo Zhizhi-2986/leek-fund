@@ -31,7 +31,7 @@ export default function LFooter() {
         </Button> */}
         <Button
           onClick={() => {
-            postMessage('executeCommand', 'leek-fund.viewFundFlow');
+            postMessage('executeCommand', 'leek-fund.viewMoneyFlow');
           }}
           type="link"
         >
@@ -39,7 +39,7 @@ export default function LFooter() {
         </Button>
         <Button
           onClick={() => {
-            postMessage('executeCommand', 'leek-fund.viewMainFundFlow');
+            postMessage('executeCommand', 'leek-fund.viewMainMoneyFlow');
           }}
           type="link"
         >

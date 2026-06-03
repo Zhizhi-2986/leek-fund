@@ -38,16 +38,7 @@ function stockTrend(code: string, name: string, stockCode: string) {
     }
   }
 
-  // TODO：问题1. 需要选择合适的显示页面。上面的 eastmoney 网站不支持期货，market 113在这个网页上不支持。
-  // 问题 2. 如果选用东财传统网页，存在交易代码不一致问题。例如甲醇 `MA2201` 在东财上的代码为 `MA201`，`PVC又是 v2201`
-  // 直接采用新浪财经网址，去除 nf的显示
-  const isFuture = /nf_/.test(stockCode) || /hf_/.test(stockCode);
-  if (isFuture) {
-    stockCode = stockCode.replace('nf_', '').replace('hf_', '').toUpperCase();
-    url = `https://finance.sina.com.cn/futures/quotes/${stockCode}.shtml`;
-  }
-
-  let tabTitle = !isFuture ? `股票实时走势(${code})` : `期货实时走势(${name})`;
+  let tabTitle = `股票实时走势(${code})`;
   const panel = ReusedWebviewPanel.create('stockTrendWebview', tabTitle, ViewColumn.One, {
     enableScripts: true,
   });

@@ -157,7 +157,6 @@ const Viewer = {
   remindFieldsCompiler: template.compile($('#remindFieldTpl').html()),
   stockRemind: {},
   stockList: [],
-  fundList: [],
   currentStockId: undef,
   /**
    * 绑定事件
@@ -325,10 +324,7 @@ const Viewer = {
    * 渲染个股列表
    * @param {} stockList
    */
-  updateTreeList(
-    stockList = this.stockList || [],
-    fundList = this.fundList || []
-  ) {
+  updateTreeList(stockList = this.stockList || []) {
     const fillRemindCount = (info) => {
       var ro;
       if ((ro = this.stockRemind[info.id])) {
@@ -338,11 +334,8 @@ const Viewer = {
       }
     };
     stockList.forEach(fillRemindCount);
-    fundList.forEach(fillRemindCount);
     // stockList.sort((a, b) => b.remindCount - a.remindCount);
-    $('#treeList').html(
-      this.treeListCompiler({ stockList: stockList, fundList: fundList })
-    );
+    $('#treeList').html(this.treeListCompiler({ stockList: stockList }));
     if (!this.currentStockId) {
       $('#treeList .stock-item:eq(1)').click();
     }
@@ -355,9 +348,6 @@ const Viewer = {
       switch (msg.command) {
         case 'updateStockList':
           this.updateTreeList((this.stockList = msg.data));
-          break;
-        case 'updateFundList':
-          this.updateTreeList(undef, (this.fundList = msg.data));
           break;
         case 'updateStockRemind':
           this.stockRemind = msg.data;
@@ -378,12 +368,12 @@ const hstflowBtn = document.querySelector('#hstflowBtn');
 const mainflowBtn = document.querySelector('#mainflowBtn');
 hstflowBtn.onclick = function () {
   vscode.postMessage({
-    command: 'hsgtFundFlow',
+    command: 'hsgtMoneyFlow',
   });
 };
 mainflowBtn.onclick = function () {
   vscode.postMessage({
-    command: 'mainFundFlow',
+    command: 'mainMoneyFlow',
   });
 };
 // 社区

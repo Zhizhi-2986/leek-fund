@@ -6,9 +6,6 @@ const CommandHandler: Record<string, (data: any) => any> = {
   updateStockList(data) {
     store.stock.setStocks(data);
   },
-  updateFundList(data) {
-    store.fund.setFunds(data);
-  },
   updateStockRemind(data) {
     // console.log('updateStockRemind: ', data);
     store.stock.setStockRemind(data);

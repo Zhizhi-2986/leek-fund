@@ -2,11 +2,9 @@
 export const STOCK_TYPE = ['sh', 'sz', 'bj', 'hk', 'gb', 'us'];
 
 export enum SortType {
-  NORMAL = 0, // 基金默认顺序
+  NORMAL = 0, // 默认顺序
   ASC = 1, // 涨跌升序
   DESC = -1, // 涨跌降序
-  AMOUNTASC = 2, // 持仓金额升序
-  AMOUNTDESC = -2, // 持仓金额降序
 }
 
 export enum IconType {
@@ -21,8 +19,6 @@ export enum IconType {
 
 /** Tree Item Type */
 export enum TreeItemType {
-  /** 基金 */
-  FUND = 'fund',
   /** 股票 */
   STOCK = 'stock',
   /** 币安 */
@@ -42,7 +38,7 @@ export interface IAmount {
   yestEarnings?: number;
 }
 
-export interface FundInfo {
+export interface MarketItemInfo {
   percent: any;
   yestpercent?: string; // 净值涨跌幅度
   name: string;
@@ -89,7 +85,7 @@ export interface FundInfo {
   isSellOut?: boolean; // 是否清仓
 }
 
-export const defaultFundInfo: FundInfo = {
+export const defaultMarketInfo: MarketItemInfo = {
   id: '',
   name: '',
   percent: '',
@@ -101,16 +97,7 @@ export enum StockCategory {
   A = 'A Stock',
   US = 'US Stock',
   HK = 'HK Stock',
-  Future = 'CN Future',
-  OverseaFuture = 'Oversea Future',
   NODATA = 'Not Support Stock',
-}
-
-export interface ProfitStatusBarInfo {
-  fundProfit: number;
-  fundProfitPercent: number;
-  fundAmount: number;
-  priceDate: string;
 }
 
 export type HeldData = {

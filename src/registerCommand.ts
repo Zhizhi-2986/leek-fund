@@ -18,13 +18,9 @@ function getDefaultSettingsPath(filename: string = 'leek-fund.settings.json'): s
     return path.join(os.homedir(), 'Downloads', filename);
   }
 }
-// import fundSuggestList from './data/fundSuggestData';
-import fundCodeList from './data/fundcodeSearch';
 import { BinanceProvider } from './explorer/binanceProvider';
 import BinanceService from './explorer/binanceService';
 import { ForexProvider } from './explorer/forexProvider';
-import { FundProvider } from './explorer/fundProvider';
-import FundService from './explorer/fundService';
 import { NewsProvider } from './explorer/newsProvider';
 import { NewsService } from './explorer/newsService';
 import { StockProvider } from './explorer/stockProvider';
@@ -35,16 +31,10 @@ import { LeekFundConfig } from './shared/leekConfig';
 import { LeekTreeItem } from './shared/leekTreeItem';
 // import checkForUpdate from './shared/update';
 import { colorOptionList, randomColor } from './shared/utils';
-import allFundTrend from './webview/allFundTrend';
 import donate from './webview/donate';
-import fundFlow, { mainFundFlow } from './webview/fundFlow';
-import fundHistory from './webview/fundHistory';
-import fundPosition from './webview/fundPosition';
-import fundRank from './webview/fundRank';
-import fundTrend from './webview/fundTrend';
+import moneyFlow, { mainMoneyFlow } from './webview/moneyFlow';
 import leekCenterView from './webview/leekCenterView';
 import openNews from './webview/news';
-import setAmount from './webview/setAmount';
 import setStockPrice from './webview/setStockPrice';
 
 import stockTrend from './webview/stockTrend';
@@ -57,9 +47,7 @@ import { AiConfigView } from './webview/ai-config';
 
 export function registerViewEvent(
   context: ExtensionContext,
-  fundService: FundService,
   stockService: StockService,
-  fundProvider: FundProvider,
   stockProvider: StockProvider,
   newsProvider: NewsProvider,
   flashNewsOutputServer: FlashNewsOutputServer,
@@ -91,90 +79,6 @@ export function registerViewEvent(
     })
   );
 
-  // Fund operation
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.refreshFund', () => {
-      globalState.fundGroups = LeekFundConfig.getConfig('leek-fund.fundGroups', []);
-      globalState.fundLists = LeekFundConfig.getConfig('leek-fund.funds', []);
-      fundProvider.refresh();
-      const handler = window.setStatusBarMessage(`基金数据已刷新`);
-      setTimeout(() => {
-        handler.dispose();
-      }, 1000);
-    })
-  );
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.deleteFund', (target) => {
-      LeekFundConfig.removeFundCfg(target.id, () => {
-        fundService.fundList = [];
-        fundProvider.refresh();
-      });
-    })
-  );
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.addFund', (target) => {
-      /* if (!service.fundSuggestList.length) {
-        service.getFundSuggestList();
-        window.showInformationMessage(`获取基金数据中，请稍后再试`);
-        return;
-      } */
-
-      window.showQuickPick(fundCodeList, { placeHolder: '请输入基金代码' }).then((code) => {
-      // window.showQuickPick(fundSuggestList, { placeHolder: '请输入基金代码' }).then((code) => {
-        if (!code) {
-          return;
-        }
-        LeekFundConfig.addFundCfg(target.id, code.split('|')[0], () => {
-          fundProvider.refresh();
-        });
-      });
-    })
-  );
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.addFundGroup', () => {
-      window.showInputBox({ placeHolder: '请输入基金分组名称' }).then((name) => {
-        if (!name) {
-          return;
-        }
-        LeekFundConfig.addFundGroupCfg(name, () => {
-          fundProvider.refresh();
-        });
-      });
-    })
-  );
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.removeFundGroup', (target) => {
-      LeekFundConfig.removeFundGroupCfg(target.id, () => {
-        fundService.fundList = [];
-        fundProvider.refresh();
-      });
-    })
-  );
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.renameFundGroup', (target) => {
-      window.showInputBox({ placeHolder: '请输入基金分组名称' }).then((name) => {
-        if (!name) {
-          return;
-        }
-        LeekFundConfig.renameFundGroupCfg(target.id, name, () => {
-          fundProvider.refresh();
-        });
-      });
-    })
-  );
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.sortFund', () => {
-      fundProvider.changeOrder();
-      fundProvider.refresh();
-    })
-  );
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.sortAmountFund', () => {
-      fundProvider.changeAmountOrder();
-      fundProvider.refresh();
-    })
-  );
-
   // Stock operation
   context.subscriptions.push(
     commands.registerCommand('leek-fund.refreshStock', () => {
@@ -193,19 +97,26 @@ export function registerViewEvent(
     })
   );
   context.subscriptions.push(
-    commands.registerCommand('leek-fund.addStockToBar', (target) => {
-      LeekFundConfig.addStockToBarCfg(target.id, () => {
+    commands.registerCommand('leek-fund.showStockInStatusBar', (target) => {
+      LeekFundConfig.setStatusBarStockVisibleCfg(target.id, true, () => {
+        stockProvider.refresh();
+      });
+    })
+  );
+  context.subscriptions.push(
+    commands.registerCommand('leek-fund.hideStockFromStatusBar', (target) => {
+      LeekFundConfig.setStatusBarStockVisibleCfg(target.id, false, () => {
         stockProvider.refresh();
       });
     })
   );
   context.subscriptions.push(
     commands.registerCommand('leek-fund.leekCenterView', () => {
-      if (stockService.stockList.length === 0 && fundService.fundList.length === 0) {
+      if (stockService.stockList.length === 0) {
         window.showWarningMessage('数据刷新中，请稍候！');
         return;
       }
-      leekCenterView(stockService, fundService);
+      leekCenterView(stockService);
     })
   );
   context.subscriptions.push(
@@ -213,7 +124,7 @@ export function registerViewEvent(
       // vscode QuickPick 不支持动态查询，只能用此方式解决
       // https://github.com/microsoft/vscode/issues/23633
       const qp = window.createQuickPick();
-      qp.items = [{ label: '请输入关键词查询，如：0000001 或 上证指数; 期货输入大写字母开头' }];
+      qp.items = [{ label: '请输入关键词查询，如：000001 或 上证指数' }];
       let code: string | undefined;
       let timer: NodeJS.Timeout | null = null;
       qp.onDidChangeValue((value) => {
@@ -264,46 +175,18 @@ export function registerViewEvent(
       stockTrend(code, name, stockCode)
     )
   );
-  // 基金点击
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.fundItemClick', (code, name) => fundTrend(code, name))
-  );
-  // 基金右键历史信息点击
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.viewFundHistory', (item) => fundHistory(item))
-  );
-  // 基金持仓
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.viewFundPosition', (item) => fundPosition(item))
-  );
-  // 基金排行
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.viewFundRank', () => fundRank())
-  );
-  // 基金走势图
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.viewFundTrend', () => allFundTrend(fundService))
-  );
   // 资金流向
   context.subscriptions.push(
-    commands.registerCommand('leek-fund.viewFundFlow', () => fundFlow())
+    commands.registerCommand('leek-fund.viewMoneyFlow', () => moneyFlow())
   );
   context.subscriptions.push(
-    commands.registerCommand('leek-fund.viewMainFundFlow', () => mainFundFlow())
-  );
-  // 基金置顶
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.setFundTop', (target) => {
-      LeekFundConfig.setFundTopCfg(target.id, () => {
-        fundProvider.refresh();
-      });
-    })
+    commands.registerCommand('leek-fund.viewMainMoneyFlow', () => mainMoneyFlow())
   );
   // 股票置顶
   context.subscriptions.push(
     commands.registerCommand('leek-fund.setStockTop', (target) => {
       LeekFundConfig.setStockTopCfg(target.id, () => {
-        fundProvider.refresh();
+        stockProvider.refresh();
       });
     })
   );
@@ -311,7 +194,7 @@ export function registerViewEvent(
   context.subscriptions.push(
     commands.registerCommand('leek-fund.setStockUp', (target) => {
       LeekFundConfig.setStockUpCfg(target.id, () => {
-        fundProvider.refresh();
+        stockProvider.refresh();
       });
     })
   );
@@ -319,7 +202,7 @@ export function registerViewEvent(
   context.subscriptions.push(
     commands.registerCommand('leek-fund.setStockDown', (target) => {
       LeekFundConfig.setStockDownCfg(target.id, () => {
-        fundProvider.refresh();
+        stockProvider.refresh();
       });
     })
   );
@@ -347,16 +230,6 @@ export function registerViewEvent(
     })
   );
 
-  // 设置基金持仓金额
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.setFundAmount', () => {
-      if (fundService.fundList.length === 0) {
-        window.showWarningMessage('数据刷新中，请重试！');
-        return;
-      }
-      setAmount(fundService);
-    })
-  );
   // 设置股票成本价
   context.subscriptions.push(
     commands.registerCommand('leek-fund.setStockPrice', () => {
@@ -511,9 +384,7 @@ export function registerViewEvent(
    */
   context.subscriptions.push(
     commands.registerCommand('leek-fund.hideText', () => {
-      fundService.toggleLabel();
       stockService.toggleLabel();
-      fundProvider.refresh();
       stockProvider.refresh();
     })
   );
@@ -521,27 +392,28 @@ export function registerViewEvent(
   context.subscriptions.push(
     commands.registerCommand('leek-fund.setStockStatusBar', () => {
       const stockList = stockService.stockList;
+      const statusBarStocks: string[] = LeekFundConfig.getConfig('leek-fund.statusBarStock') || [];
       const stockNameList = stockList.map((item: LeekTreeItem) => {
         return {
           label: `${item.info.name}`,
           description: `${item.info.code}`,
+          picked: statusBarStocks.includes(item.info.code),
         };
       });
       window
         .showQuickPick(stockNameList, {
-          placeHolder: '输入过滤选择，支持多选（限6个）',
+          placeHolder: '输入过滤选择，支持多选；选中的股票会在状态栏轮播展示',
           canPickMany: true,
         })
         .then((res) => {
           if (!res) {
-            res = [];
+            return;
           }
-          let codes = res.map((item) => item.description);
-          if (codes.length > 6) {
-            codes = codes.slice(0, 6);
-          }
+          const codes = res.map((item) => item.description);
           LeekFundConfig.updateStatusBarStockCfg(codes, () => {
-            const handler = window.setStatusBarMessage(`下次数据刷新见效`);
+            const handler = window.setStatusBarMessage(
+              codes.length ? `状态栏轮播列表已更新` : `状态栏轮播已清空`
+            );
             setTimeout(() => {
               handler.dispose();
             }, 1500);
@@ -557,22 +429,21 @@ export function registerViewEvent(
       window
         .showQuickPick(
           [
-            { label: '📌 状态栏股票设置', description: 'statusbar-stock' },
+            { label: '📌 状态栏轮播股票设置', description: 'statusbar-stock' },
             {
               label: `🟦 状态栏显示或隐藏 ${
                 process.platform === 'darwin' ? '(Cmd+Opt+T)' : '(Ctrl+Alt+T)'
               }`,
               description: 'toggle-status-bar',
             },
-            { label: '🟩 基金状态栏显示或隐藏', description: 'toggle-fund-bar' },
-            { label: '🟥 股票状态栏显示或隐藏', description: 'toggle-stock-bar' },
+            { label: '🟥 状态栏轮播显示或隐藏', description: 'toggle-stock-bar' },
             {
               label: '🧩 状态栏图标显示或隐藏',
               description: 'toggle-status-bar-icon',
             },
             { label: '📈 状态栏股票涨时文字颜色', description: 'statusbar-rise' },
             { label: '📉 状态栏股票跌时文字颜色', description: 'statusbar-fall' },
-            { label: '🍖 涨跌图标更换', description: 'icontype' },
+            { label: '🍖 股票涨跌图标更换', description: 'icontype' },
             { label: '👀 显示/隐藏文本', description: 'hideText' },
             {
               label: globalState.showEarnings ? '隐藏盈亏' : '💰 显示盈亏',
@@ -628,18 +499,16 @@ export function registerViewEvent(
                 );
               });
           } else if (type === 'statusbar-stock') {
-            // 状态栏股票设置
+            // 状态栏轮播股票设置
             commands.executeCommand('leek-fund.setStockStatusBar');
           } else if (type === 'toggle-status-bar') {
             commands.executeCommand('leek-fund.toggleStatusBarVisibility');
-          } else if (type === 'toggle-fund-bar') {
-            commands.executeCommand('leek-fund.toggleFundBarVisibility');
           } else if (type === 'toggle-stock-bar') {
             commands.executeCommand('leek-fund.toggleStockBarVisibility');
           } else if (type === 'toggle-status-bar-icon') {
             commands.executeCommand('leek-fund.toggleStatusBarIconVisibility');
           } else if (type === 'icontype') {
-            // 基金&股票涨跌图标
+            // 股票涨跌图标
             window
               .showQuickPick(
                 [
@@ -673,7 +542,7 @@ export function registerViewEvent(
                   },
                 ],
                 {
-                  placeHolder: `第二步：选择基金&股票涨跌图标`,
+                  placeHolder: `第二步：选择股票涨跌图标`,
                 }
               )
               .then((iconItem: any) => {
@@ -780,10 +649,14 @@ export function registerViewEvent(
             }
             if (index > -1) {
               newCfg[index] = res.description;
+            } else {
+              newCfg.push(res.description);
             }
           }
           LeekFundConfig.updateStatusBarStockCfg(newCfg, () => {
-            const handler = window.setStatusBarMessage(`下次数据刷新见效`);
+            const handler = window.setStatusBarMessage(
+              newCfg.length ? `状态栏轮播列表已更新` : `状态栏轮播已清空`
+            );
             setTimeout(() => {
               handler.dispose();
             }, 1500);
@@ -947,7 +820,6 @@ export function registerViewEvent(
           );
 
           // Refresh the extension state
-          commands.executeCommand('leek-fund.refreshFund');
           commands.executeCommand('leek-fund.refreshStock');
         } else {
           window.showErrorMessage('导入设置失败');
@@ -1005,11 +877,6 @@ export function registerCommandPaletteEvent(context: ExtensionContext, statusbar
   context.subscriptions.push(
     commands.registerCommand('leek-fund.toggleStatusBarVisibility', () => {
       statusbar.toggleVisibility();
-    })
-  );
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.toggleFundBarVisibility', () => {
-      statusbar.toggleFundBarVisibility();
     })
   );
   context.subscriptions.push(

@@ -55,18 +55,9 @@ export default function SideBarist({
   return (
     <>
       <Collapse
-        defaultActiveKey={['fund', 'stock']}
+        defaultActiveKey={['stock']}
         className={styles['stock-list']}
       >
-        <Panel header="基金" key="fund">
-          <StockList
-            currentStock={currentStock}
-            state={state.fund}
-            stateKey="funds"
-            emptyText="请先添加基金数据"
-            onClick={onClick}
-          ></StockList>
-        </Panel>
         <Panel header="股票" key="stock">
           <StockList
             currentStock={currentStock}

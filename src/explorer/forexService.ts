@@ -2,7 +2,7 @@ import Axios from 'axios';
 import { load } from 'cheerio';
 import { ExtensionContext } from 'vscode';
 import { LeekTreeItem } from '../shared/leekTreeItem';
-import { ForexData, FundInfo, TreeItemType } from '../shared/typed';
+import { ForexData, MarketItemInfo, TreeItemType } from '../shared/typed';
 import { LeekService } from './leekService';
 import globalState from '../globalState';
 
@@ -45,7 +45,7 @@ export class ForexService extends LeekService {
 
       const forexList: Array<ForexData> = [];
       $('table').eq(1).find('tr').each((i, trElement) => {
-        const rowData: FundInfo = {
+        const rowData: MarketItemInfo = {
           percent: '',
           name: '',
           code: '',

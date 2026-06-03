@@ -9,7 +9,7 @@ import Axios from 'axios';
 import { ExtensionContext } from 'vscode';
 import globalState from '../globalState';
 import { LeekTreeItem } from '../shared/leekTreeItem';
-import { FundInfo, SortType, TreeItemType } from '../shared/typed';
+import { MarketItemInfo, SortType, TreeItemType } from '../shared/typed';
 import { randHeader, sortData } from '../shared/utils';
 import { LeekService } from './leekService';
 
@@ -89,7 +89,7 @@ export default class BinanceService extends LeekService {
             data,
             symbol,
           } = item;
-          const obj: FundInfo = {
+          const obj: MarketItemInfo = {
             id: symbol,
             code: '',
             name: symbol,
@@ -109,7 +109,7 @@ export default class BinanceService extends LeekService {
         } else {
           // handle status === 'rejected'
           const { symbol } = item;
-          const obj: FundInfo = {
+          const obj: MarketItemInfo = {
             id: symbol,
             code: '',
             percent: '0',

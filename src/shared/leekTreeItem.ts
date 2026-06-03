@@ -2,17 +2,17 @@ import { join } from 'path';
 import { ExtensionContext, TreeItem, TreeItemCollapsibleState } from 'vscode';
 import globalState from '../globalState';
 import { DEFAULT_LABEL_FORMAT } from './constant';
-import { FundInfo, IconType, TreeItemType } from './typed';
+import { IconType, MarketItemInfo, TreeItemType } from './typed';
 import { formatLabelString, formatTreeText, toFixed } from './utils';
 
 export class LeekTreeItem extends TreeItem {
-  info: FundInfo;
+  info: MarketItemInfo;
   type: string | undefined;
   isCategory: boolean;
   contextValue: string | undefined;
   _itemType?: TreeItemType;
 
-  constructor(info: FundInfo, context: ExtensionContext | undefined, isCategory = false) {
+  constructor(info: MarketItemInfo, context: ExtensionContext | undefined, isCategory = false) {
     super('', TreeItemCollapsibleState.None);
     this.info = info;
     this.isCategory = isCategory;
@@ -32,13 +32,10 @@ export class LeekTreeItem extends TreeItem {
       updown,
       volume,
       amount = 0,
-      earnings,
-      // priceDate,
       time,
       afterPrice,
       afterPercent,
       isStop,
-      t2,
       contextValue,
       _itemType,
       spotBuyPrice = 0,
@@ -54,11 +51,10 @@ export class LeekTreeItem extends TreeItem {
     if (_itemType) {
       this._itemType = _itemType;
     } else {
-      this._itemType = isStock ? TreeItemType.STOCK : TreeItemType.FUND;
+      this._itemType = TreeItemType.STOCK;
     }
 
     const isStockItem = this._itemType === TreeItemType.STOCK;
-    const isFundItem = this._itemType === TreeItemType.FUND;
     const isBinanceItem = this._itemType === TreeItemType.BINANCE;
     const isForex = this._itemType === TreeItemType.FOREX;
 
@@ -145,28 +141,6 @@ export class LeekTreeItem extends TreeItem {
             }
           );
         }
-      } else if (isFundItem) {
-        /* text =
-          `${!isIconPath ? iconPath : ''}${formatTreeText(`${_percent}%`)}「${name}」${
-            t2 || !(globalState.showEarnings && amount > 0)
-              ? ''
-              : `(${grow ? '盈' : '亏'}：${grow ? '+' : ''}${earnings})`
-          }` + `${t2 ? `(${time})` : ''}`; */
-        text = formatLabelString(
-          globalState.labelFormat?.['sidebarFundLabelFormat'] ??
-            DEFAULT_LABEL_FORMAT.sidebarFundLabelFormat,
-          {
-            ...info,
-            icon: !isIconPath ? iconPath : '',
-            percent: `${_percent}%`,
-            earnings:
-              t2 || !(globalState.showEarnings && Number(amount) > 0)
-                ? ''
-                : `(${grow ? '盈' : '亏'}：${grow ? '+' : ''}${earnings})`,
-            time: t2 && time ? `(${time})` : '',
-          }
-        );
-        // ${earningPercent !== 0 ? '，率：' + earningPercent + '%' : ''}
       } else if (isBinanceItem) {
         text = formatLabelString(
           globalState.labelFormat?.['sidebarBinanceLabelFormat'] ??
@@ -202,22 +176,14 @@ export class LeekTreeItem extends TreeItem {
       this.label = text;
     }
     this.id = info.id || code;
-    if (isStockItem || isFundItem || isBinanceItem) {
+    if (!isCategory && (isStockItem || isBinanceItem)) {
       let typeAndSymbol = `${type}${symbol}`;
-      const isFuture = /nf_/.test(code) || /hf_/.test(code);
-      if (isFuture) {
-        typeAndSymbol = code;
-      }
       this.command = {
         title: name, // 标题
-        command: isStockItem
-          ? 'leek-fund.stockItemClick'
-          : isBinanceItem
-          ? 'leek-fund.binanceItemClick'
-          : 'leek-fund.fundItemClick', // 命令 ID
+        command: isStockItem ? 'leek-fund.stockItemClick' : 'leek-fund.binanceItemClick',
         arguments: [
-          isStockItem ? '0' + symbol : code, // 基金/股票编码
-          name, // 基金/股票名称
+          isStockItem ? '0' + symbol : code,
+          name,
           text,
           typeAndSymbol,
         ],
@@ -230,18 +196,12 @@ export class LeekTreeItem extends TreeItem {
     if (isStockItem) {
       const labelText = !showLabel ? name : '';
 
-      const isFuture = /nf_/.test(code) || /hf_/.test(code);
-
-      // type字段：国内期货前缀 `nf_` 。股票的 type 是交易所 (sz,sh,bj)
       const typeText = type;
-      const symbolText = isFuture ? name : symbol;
 
       if (type === 'nodata') {
         this.tooltip = '接口不支持，右键删除关注';
-      } else if (isFuture) {
-        this.tooltip = `【今日行情】${name} ${code}\n 涨跌：${updown}   百分比：${_percent}%\n 最高：${high}   最低：${low}\n 今开：${open}   昨结：${yestclose}\n 成交量：${volume}   成交额：${amount}`;
       } else {
-        this.tooltip = `【今日行情】${labelText}${typeText}${symbolText}\n 涨跌：${updown}   百分比：${_percent}%\n 最高：${high}   最低：${low}\n 今开：${open}   昨收：${yestclose}${
+        this.tooltip = `【今日行情】${labelText}${typeText}${symbol}\n 涨跌：${updown}   百分比：${_percent}%\n 最高：${high}   最低：${low}\n 今开：${open}   昨收：${yestclose}${
           afterPrice ? `\n 盘后：${afterPrice}   涨跌幅：${afterPercent}%` : ''
         }${
           heldAmount ? `\n 成本：${heldPrice}   持仓：${heldAmount}` : ''

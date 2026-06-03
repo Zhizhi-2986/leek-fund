@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { EventEmitter } from 'events';
 import { commands, ViewColumn, Webview, window } from 'vscode';
-import FundService from '../explorer/fundService';
 import StockService from '../explorer/stockService';
 import globalState from '../globalState';
 import { FlashNewsServerInterface } from '../output/flash-news/NewsFlushServiceAbstractClass';
@@ -18,7 +17,7 @@ let _INITED = false;
 
 let panelEvents: EventEmitter;
 
-function leekCenterView(stockService: StockService, fundServices: FundService) {
+function leekCenterView(stockService: StockService) {
   const panel = ReusedWebviewPanel.create('leekCenterWebview', `韭菜中心`, ViewColumn.One, {
     enableScripts: true,
     retainContextWhenHidden: true,
@@ -31,7 +30,7 @@ function leekCenterView(stockService: StockService, fundServices: FundService) {
   let flashNewsServer: FlashNewsServerInterface | undefined;
   // const transceiver = transceiverFactory(panel.webview); 备用
 
-  setList(panel.webview, panelEvents, stockService, fundServices);
+  setList(panel.webview, panelEvents, stockService);
   setStocksRemind(panel.webview, panelEvents);
   // setDiscussions(panel.webview, panelEvents);
 
@@ -173,8 +172,7 @@ function setStocksRemind(webview: Webview, panelEvents: EventEmitter) {
 function setList(
   webview: Webview,
   panelEvents: EventEmitter,
-  stockService: StockService,
-  fundServices: FundService
+  stockService: StockService
 ) {
   const postListFactory = (command: string) => (data: Array<LeekTreeItem>) => {
     webview.postMessage({
@@ -197,26 +195,13 @@ function setList(
     };
   }
 
-  let postFundList: undefined | ReturnType<typeof postListFactory>;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  function updateFundList(webview: Webview, defaultFundList: Array<LeekTreeItem>) {
-    postFundList = postListFactory('updateFundList');
-    events.on('fundListUpdate', postFundList);
-    return () => {
-      events.off('fundListUpdate', postFundList!);
-    };
-  }
-
   const offUpdateStockList = updateStockList(webview, stockService.stockList);
-  const offUpdateFundList = updateFundList(webview, fundServices.fundList);
 
   panelEvents.on('pageReady', () => {
     postStockList!(stockService.stockList);
-    postFundList!(fundServices.fundList);
   });
   panelEvents.on('onDidDispose', () => {
     offUpdateStockList();
-    offUpdateFundList();
   });
 }
 

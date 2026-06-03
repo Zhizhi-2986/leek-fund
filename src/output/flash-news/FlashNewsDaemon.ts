@@ -49,7 +49,6 @@ export default class FlashNewsDaemon {
   }
 
   initServices() {
-    // 暂时不要金十快讯，金十更适合期货。
     this.flushServices.add(new Jin10FlushService(this));
     this.flushServices.add(new XuanGuBaoFlushService(this));
     this.isDestroy = false;

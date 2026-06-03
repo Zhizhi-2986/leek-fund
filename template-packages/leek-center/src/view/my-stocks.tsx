@@ -3,7 +3,6 @@ import SideBarList from '@/components/stockList/SideBarList';
 import { LeekTreeItem } from '@/../types/shim-background';
 import state from '@/stores/index';
 import StockInfoPanel from '@/components/stock-info-panel';
-import FundInfoPanel from '@/components/fund-info-panel';
 import { useState } from 'react';
 import { useObserver } from 'mobx-react';
 
@@ -12,16 +11,9 @@ const { Content, Sider } = Layout;
 function RenderMyStockContent() {
   return useObserver(() => {
     if (state.stock.stockPanelInfo) {
-      if (state.stock.stockPanelInfo.info.isStock) {
-        return (
-          <StockInfoPanel stock={state.stock.stockPanelInfo}></StockInfoPanel>
-        );
-      } else {
-        console.log(JSON.stringify(state.stock.stockPanelInfo));
-        return (
-          <FundInfoPanel fund={state.stock.stockPanelInfo}></FundInfoPanel>
-        );
-      }
+      return (
+        <StockInfoPanel stock={state.stock.stockPanelInfo}></StockInfoPanel>
+      );
     }
     return null;
   });

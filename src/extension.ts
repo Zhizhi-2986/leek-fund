@@ -9,8 +9,6 @@ import { BinanceProvider } from './explorer/binanceProvider';
 import BinanceService from './explorer/binanceService';
 import { ForexProvider } from './explorer/forexProvider';
 import { ForexService } from './explorer/forexService';
-import { FundProvider } from './explorer/fundProvider';
-import FundService from './explorer/fundService';
 import { NewsProvider } from './explorer/newsProvider';
 import { StockProvider } from './explorer/stockProvider';
 import StockService from './explorer/stockService';
@@ -23,19 +21,17 @@ import { LeekFundConfig } from './shared/leekConfig';
 import Log from './shared/log';
 import { Telemetry } from './shared/telemetry';
 import { SortType } from './shared/typed';
-import { events, formatDate, isStockTime } from './shared/utils';
+import { events, isStockTime } from './shared/utils';
 import { ProfitStatusBar } from './statusbar/Profit';
 import { StatusBar } from './statusbar/statusBar';
 import { cacheStocksRemindData } from './webview/leekCenterView';
-import { cacheFundAmountData, updateAmount } from './webview/setAmount';
-import { cacheStockPriceData, updateStockPrice } from './webview/setStockPrice';
+import { cacheStockPriceData } from './webview/setStockPrice';
 import { startProxyServer } from './webview/proxyService/proxyService';
 import createEastMoneyDataServer from './service/eastmoney';
 
 let loopTimer: NodeJS.Timeout | null = null;
 let binanceLoopTimer: NodeJS.Timeout | null = null;
 let forexLoopTimer: NodeJS.Timeout | null = null;
-let fundTreeView: TreeView<any> | null = null;
 let stockTreeView: TreeView<any> | null = null;
 let forexTreeView: TreeView<any> | null = null;
 let binanceTreeView: TreeView<any> | null = null;
@@ -59,8 +55,6 @@ export async function activate(context: ExtensionContext) {
   });
 
   setGlobalVariable();
-  updateAmount();
-  updateStockPrice();
 
   flashNewsOutputServer = new FlashNewsOutputServer();
 
@@ -70,24 +64,17 @@ export async function activate(context: ExtensionContext) {
     destroy: () => {}
   } as any);
 
-  const fundService = new FundService(context);
   const stockService = new StockService(context);
   const binanceService = new BinanceService(context);
   const forexService = new ForexService(context);
 
-  const nodeFundProvider = new FundProvider(fundService);
   const nodeStockProvider = new StockProvider(stockService);
   const binanceProvider = new BinanceProvider(binanceService);
   const forexProvider = new ForexProvider(forexService);
   const newsProvider = new NewsProvider();
 
-  const statusBar = new StatusBar(stockService, fundService);
+  const statusBar = new StatusBar(stockService);
   profitBar = new ProfitStatusBar();
-
-  // create fund & stock side views
-  fundTreeView = window.createTreeView('leekFundView.fund', {
-    treeDataProvider: nodeFundProvider,
-  });
 
   stockTreeView = window.createTreeView('leekFundView.stock', {
     treeDataProvider: nodeStockProvider,
@@ -107,11 +94,6 @@ export async function activate(context: ExtensionContext) {
 
   // fix when TreeView collapse https://github.com/giscafer/leek-fund/issues/31
   const manualRequest = () => {
-    const fundLists = LeekFundConfig.getConfig('leek-fund.funds') || [];
-    fundLists.forEach((value: Array<string>, index: number) => {
-      fundService.getData(value, SortType.NORMAL, `fundGroup_${index}`);
-    });
-
     stockService.getData(LeekFundConfig.getConfig('leek-fund.stocks'), SortType.NORMAL);
   };
 
@@ -127,15 +109,8 @@ export async function activate(context: ExtensionContext) {
         return;
       }
 
-      if (fundTreeView?.visible) {
-        // fix https://github.com/giscafer/leek-fund/issues/78
-        if (globalState.fundAmountCacheDate !== formatDate(new Date())) {
-          updateAmount();
-        }
-      }
-      if (stockTreeView?.visible || fundTreeView?.visible) {
+      if (stockTreeView?.visible) {
         nodeStockProvider.refresh();
-        nodeFundProvider.refresh();
         // statusBar.refresh();
       } else {
         manualRequest();
@@ -198,7 +173,6 @@ export async function activate(context: ExtensionContext) {
     setIntervalTime();
     setGlobalVariable();
     statusBar.refresh();
-    nodeFundProvider.refresh();
     nodeStockProvider.refresh();
     newsProvider.refresh();
     binanceProvider.refresh();
@@ -211,9 +185,7 @@ export async function activate(context: ExtensionContext) {
   // register event
   registerViewEvent(
     context,
-    fundService,
     stockService,
-    nodeFundProvider,
     nodeStockProvider,
     newsProvider,
     flashNewsOutputServer,
@@ -242,9 +214,6 @@ function setGlobalVariable() {
   const stockPrice = LeekFundConfig.getConfig('leek-fund.stockPrice') || {};
   cacheStockPriceData(stockPrice);
 
-  const fundAmount = LeekFundConfig.getConfig('leek-fund.fundAmount') || {};
-  cacheFundAmountData(fundAmount);
-
   globalState.iconType = LeekFundConfig.getConfig('leek-fund.iconType') || 'arrow';
 
   globalState.stockHeldTipShow = LeekFundConfig.getConfig('leek-fund.stockHeldTipShow') ?? true;
@@ -261,31 +230,6 @@ function setGlobalVariable() {
   globalState.labelFormat = LeekFundConfig.getConfig('leek-fund.labelFormat');
 
   globalState.immersiveBackground = LeekFundConfig.getConfig('leek-fund.immersiveBackground', true);
-
-  globalState.fundGroups = LeekFundConfig.getConfig('leek-fund.fundGroups') || [];
-
-  const fundLists = LeekFundConfig.getConfig('leek-fund.funds') || [];
-  if (typeof fundLists[0] === 'string' || fundLists[0] instanceof String) {
-    // 迁移用户的基金代码到分组模式
-    const newFundLists = [fundLists];
-    globalState.fundLists = newFundLists;
-    LeekFundConfig.setConfig('leek-fund.funds', newFundLists);
-  } else {
-    globalState.fundLists = fundLists;
-  }
-  // 临时解决3.10.1~3.10.3 pr产生的分组bug
-  // const leekFundExt = extensions.getExtension('giscafer.leek-fund');
-  // const currentVersion = leekFundExt?.packageJSON?.version;
-  // if (compare(currentVersion, '3.9.2', '>=')) {
-  // const arr = LeekFundConfig.getConfig('leek-fund.stocks') || [];
-  // const flag = arr.some((a: any) => Array.isArray(a));
-  // if (flag) {
-  //   const stockList = uniq(compact(flattenDeep(arr)));
-  //   Log.info(" ~ setGlobalVariable ~ stockList:", stockList);
-  //   LeekFundConfig.setConfig('leek-fund.stocks', stockList);
-  // }
-
-  // }
 }
 
 // this method is called when your extension is deactivated

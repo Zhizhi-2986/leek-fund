@@ -4,8 +4,7 @@
  *-------------------------------------------------------------*/
 
 import { window, workspace } from 'vscode';
-import globalState from '../globalState';
-import { clean, uniq, events } from './utils';
+import { uniq, events } from './utils';
 import { compact, flattenDeep } from 'lodash';
 
 export class BaseConfig {
@@ -52,9 +51,7 @@ export class BaseConfig {
     const sourceCfg = this.getGlobalConfigArray(cfgKey);
     const newCfg = sourceCfg.filter((item: string) => item !== code);
     if (sourceCfg.length === newCfg.length) {
-      window.showInformationMessage(
-        `删除期货不成功。请 [点击此处](https://github.com/LeekHub/leek-fund/issues/281) 查看期货相关问题`
-      );
+      window.showInformationMessage(`未找到要删除的配置项：${code}`);
     }
     return config.update(cfgKey, newCfg, true);
   }
@@ -64,108 +61,6 @@ export class LeekFundConfig extends BaseConfig {
   constructor() {
     super();
   }
-  // Fund Begin
-  static addFundGroupCfg(name: string, cb?: Function) {
-    globalState.fundGroups.push(name);
-    globalState.fundLists.push([]);
-    this.setConfig('leek-fund.fundGroups', globalState.fundGroups);
-    this.setConfig('leek-fund.funds', globalState.fundLists);
-    window.showInformationMessage(`Fund Group Successfully add.`);
-    if (cb && typeof cb === 'function') {
-      cb(name);
-    }
-  }
-
-  static renameFundGroupCfg(groupId: string, name: string, cb?: Function) {
-    const index: number = parseInt(groupId.replace('fundGroup_', ''));
-    globalState.fundGroups[index] = name;
-    this.setConfig('leek-fund.fundGroups', globalState.fundGroups);
-    window.showInformationMessage(`Fund Group Successfully rename.`);
-    if (cb && typeof cb === 'function') {
-      cb(groupId);
-    }
-  }
-
-  static removeFundGroupCfg(groupId: string, cb?: Function) {
-    const index: number = parseInt(groupId.replace('fundGroup_', ''));
-    const removedFundList: Array<string> = globalState.fundLists[index];
-    const removeFundGroup = () => {
-      globalState.fundGroups.splice(index, 1);
-      globalState.fundLists.splice(index, 1);
-      this.setConfig('leek-fund.fundGroups', globalState.fundGroups);
-      this.setConfig('leek-fund.funds', globalState.fundLists);
-      window.showInformationMessage(`Fund Group Successfully delete.`);
-      if (cb && typeof cb === 'function') {
-        cb(groupId);
-      }
-    };
-
-    if (removedFundList.length) {
-      window
-        .showInformationMessage('删除分组会清空基金数据无法恢复，请确认！！', '好的', '取消')
-        .then((res) => {
-          if (res === '好的') {
-            removeFundGroup();
-          }
-        });
-    } else {
-      removeFundGroup();
-    }
-  }
-
-  static addFundCfg(groupId: string, code: string, cb?: Function) {
-    const index: number = parseInt(groupId.replace('fundGroup_', ''));
-    const funds = globalState.fundLists[index] as Array<string | number>;
-    let updatedFunds = [...funds, code];
-    updatedFunds = clean(updatedFunds);
-    updatedFunds = uniq(updatedFunds);
-    globalState.fundLists[index] = updatedFunds as never;
-    this.setConfig('leek-fund.funds', globalState.fundLists);
-    window.showInformationMessage(`Fund Successfully add.`);
-    if (cb && typeof cb === 'function') {
-      cb(code);
-    }
-  }
-
-  static removeFundCfg(code: string, cb?: Function) {
-    const codeComponents = code.split('_');
-    if (codeComponents.length < 3) {
-      window.showInformationMessage(`Fund Id error.`);
-      return;
-    }
-    const index: number = parseInt(codeComponents[1]);
-    const fundCode: string = codeComponents[2];
-    const funds = globalState.fundLists[index] as Array<string | number>;
-    let updatedFunds = funds;
-    updatedFunds.splice(updatedFunds.indexOf(fundCode), 1);
-    updatedFunds = clean(updatedFunds);
-    updatedFunds = uniq(updatedFunds);
-    globalState.fundLists[index] = updatedFunds as never;
-    this.setConfig('leek-fund.funds', globalState.fundLists);
-    window.showInformationMessage(`Fund Successfully delete.`);
-    if (cb && typeof cb === 'function') {
-      cb(code);
-    }
-  }
-
-  static setFundTopCfg(code: string, cb?: Function) {
-    const codeComponents = code.split('_');
-    if (codeComponents.length < 3) {
-      window.showInformationMessage(`Fund Id error.`);
-      return;
-    }
-    const index: number = parseInt(codeComponents[1]);
-    const fundCode: string = codeComponents[2];
-    const funds = globalState.fundLists[index] as Array<string>;
-    const updatedFunds = [fundCode, ...funds.filter((item) => item !== fundCode)];
-    globalState.fundLists[index] = updatedFunds as never;
-    this.setConfig('leek-fund.funds', globalState.fundLists);
-    window.showInformationMessage(`Fund Successfully set to top.`);
-    if (cb && typeof cb === 'function') {
-      cb(code);
-    }
-  }
-  // Fund End
 
   // Stock Begin
   static updateStockCfg(list: string, cb?: Function) {
@@ -198,36 +93,33 @@ export class LeekFundConfig extends BaseConfig {
     });
   }
 
-  static addStockToBarCfg(code: string, cb?: Function) {
-    const addStockToBar = () => {
-      let configArr: string[] = this.getConfig('leek-fund.statusBarStock');
-      if (configArr.length >= 4) {
-        window.showInformationMessage(`StatusBar Exceeding Length.`);
-        if (cb && typeof cb === 'function') {
-          cb(code);
-        }
-      } else if (configArr.includes(code)) {
-        window.showInformationMessage(`StatusBar Already Have.`);
-        if (cb && typeof cb === 'function') {
-          cb(code);
-        }
-      } else {
-        configArr.push(code);
-        this.setConfig('leek-fund.statusBarStock', configArr).then(() => {
-          window.showInformationMessage(`Stock Successfully add to statusBar.`);
+  static setStatusBarStockVisibleCfg(code: string, visible: boolean, cb?: Function) {
+    const setStatusBarStockVisible = () => {
+      const configArr: string[] = this.getConfig('leek-fund.statusBarStock') || [];
+      const nextConfig = visible
+        ? uniq([...configArr, code])
+        : configArr.filter((item) => item !== code);
+      const updateStatusBarStock = () =>
+        this.setConfig('leek-fund.statusBarStock', nextConfig).then(() => {
+          window.showInformationMessage(visible ? `已加入状态栏轮播展示。` : `已取消状态栏轮播展示。`);
           if (cb && typeof cb === 'function') {
-            cb(code);
+            cb(code, nextConfig);
           }
         });
+
+      if (!visible && nextConfig.length === 0 && !this.getConfig('leek-fund.hideStatusBarStock')) {
+        this.setConfig('leek-fund.hideStatusBarStock', true).then(updateStatusBarStock);
+      } else {
+        updateStatusBarStock();
       }
     };
 
-    if (this.getConfig('leek-fund.hideStatusBarStock')) {
+    if (visible && this.getConfig('leek-fund.hideStatusBarStock')) {
       this.setConfig('leek-fund.hideStatusBarStock', false).then(() => {
-        addStockToBar();
+        setStatusBarStockVisible();
       });
     } else {
-      addStockToBar();
+      setStatusBarStockVisible();
     }
   }
 
@@ -271,14 +163,6 @@ export class LeekFundConfig extends BaseConfig {
         previousIndex = index;
         break;
       }
-      if (/^(nf_)/.test(code) && /^(nf_)/.test(previousCode)) {
-        previousIndex = index;
-        break;
-      }
-      if (/^(hf_)/.test(code) && /^(hf_)/.test(previousCode)) {
-        previousIndex = index;
-        break;
-      }
     }
     if (previousIndex < 0) {
       callback();
@@ -314,14 +198,6 @@ export class LeekFundConfig extends BaseConfig {
         break;
       }
       if (/^(usr_)/.test(code) && /^(usr_)/.test(nextCode)) {
-        nextIndex = index;
-        break;
-      }
-      if (/^(nf_)/.test(code) && /^(nf_)/.test(nextCode)) {
-        nextIndex = index;
-        break;
-      }
-      if (/^(hf_)/.test(code) && /^(hf_)/.test(nextCode)) {
         nextIndex = index;
         break;
       }

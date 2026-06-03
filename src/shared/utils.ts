@@ -158,16 +158,6 @@ export const sortData = (data: LeekTreeItem[] = [], order = SortType.NORMAL) => 
         return aValue > bValue ? 1 : -1;
       }
     });
-  } else if (order === SortType.AMOUNTASC || order === SortType.AMOUNTDESC) {
-    return data.sort((a: any, b: any) => {
-      const aValue = a.info.amount - 0;
-      const bValue = b.info.amount - 0;
-      if (order === SortType.AMOUNTDESC) {
-        return aValue > bValue ? -1 : 1;
-      } else {
-        return aValue > bValue ? 1 : -1;
-      }
-    });
   } else {
     return data;
   }
@@ -177,14 +167,6 @@ export const formatTreeText = (text = '', num = 10): string => {
   const str = text + '';
   const lenx = Math.max(num - str.length, 0);
   return str + ' '.repeat(lenx);
-};
-
-export const caculateEarnings = (money: number, price: number, currentPrice: number): number => {
-  if (Number(currentPrice) > 0) {
-    return (money / price) * currentPrice - money;
-  } else {
-    return 0;
-  }
 };
 
 export const colorOptionList = (): QuickPickItem[] => {
@@ -299,22 +281,11 @@ export const isStockTime = () => {
     const date = momentTz().tz(stockTime.tz);
     const hours = date.hours();
     const minus = date.minutes();
-    // 针对期货交易时间跨越时间0点
-    if (stockTime.span[0] > stockTime.span[1]) {
-      if (
-        hours >= stockTime.span[0] ||
-        hours < stockTime.span[1] ||
-        (hours === stockTime.span[1] && minus <= delay)
-      ) {
-        return true;
-      }
-    } else {
-      if (
-        (hours >= stockTime.span[0] && hours < stockTime.span[1]) ||
-        (hours === stockTime.span[1] && minus <= delay)
-      ) {
-        return true;
-      }
+    if (
+      (hours >= stockTime.span[0] && hours < stockTime.span[1]) ||
+      (hours === stockTime.span[1] && minus <= delay)
+    ) {
+      return true;
     }
   }
   return false;
@@ -322,12 +293,6 @@ export const isStockTime = () => {
 
 export function allMarkets(): Array<string> {
   let result: Array<string> = [];
-  const funds: Array<string> = LeekFundConfig.getConfig('leek-fund.funds');
-  if (funds.length > 0) {
-    // 针对只配置基金的用户，默认增加A股交易时间
-    result.push(StockCategory.A);
-  }
-
   const stocks: Array<string> = LeekFundConfig.getConfig('leek-fund.stocks');
   stocks.forEach((item: string) => {
     let market = StockCategory.NODATA;
@@ -337,12 +302,6 @@ export function allMarkets(): Array<string> {
       market = StockCategory.HK;
     } else if (/^(usr_)/.test(item)) {
       market = StockCategory.US;
-    } else if (/^(nf_)/.test(item)) {
-      market = StockCategory.Future;
-    } else if (/^[A-Z]+/.test(item)) {
-      market = StockCategory.Future;
-    } else if (/^(hf_)/.test(item)) {
-      market = StockCategory.OverseaFuture;
     }
     if (!result.includes(market)) {
       result.push(market);
@@ -356,8 +315,6 @@ export function allStockTimes(): Map<string, { tz: string; span: Array<number> }
   stocks.set(StockCategory.A, { tz: 'Asia/Shanghai', span: [9, 15] });
   stocks.set(StockCategory.HK, { tz: 'Asia/Hong_Kong', span: [9, 16] });
   stocks.set(StockCategory.US, { tz: 'America/New_York', span: [4, 20] });
-  stocks.set(StockCategory.Future, { tz: 'Asia/Shanghai', span: [21, 15] });
-  stocks.set(StockCategory.OverseaFuture, { tz: 'Asia/Shanghai', span: [9, 7] });
   return stocks;
 }
 

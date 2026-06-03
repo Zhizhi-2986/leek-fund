@@ -382,7 +382,7 @@
 
       let sortType = 'default';
       const list = $('.list');
-      let fundList = [];
+      let stockList = [];
       let priceDate = new Date().toDateString();
       let searchMatches = [];
       let activeMatchIndex = -1;
@@ -399,7 +399,7 @@
               $(this).text(origin);
             }
           });
-          $('.list .item-left .fund-code').each(function () {
+          $('.list .item-left .stock-code').each(function () {
             const origin = $(this).attr('data-origin-code');
             if (origin !== undefined) {
               $(this).text(origin);
@@ -477,7 +477,7 @@
 
           $('.list .item-left').each(function () {
             const nameEl = $(this).find('.name');
-            const codeEl = $(this).find('.fund-code');
+            const codeEl = $(this).find('.stock-code');
             const nameText = nameEl.attr('data-origin-name') || nameEl.text();
             const codeText = codeEl.attr('data-origin-code') || codeEl.text();
             nameEl.attr('data-origin-name', nameText);
@@ -542,17 +542,15 @@
       });
 
       function init(data) {
-        // const fundList = ${JSON.stringify(list)};
         if (sortType !== 'default') {
-          fundList = data.sort((a, b) => {
+          stockList = data.sort((a, b) => {
             const ae = a.earningPercent || 0;
             const be = b.earningPercent || 0;
             return sortType === 'earningsDesc' ? be - ae : ae - be;
           });
         } else {
-          fundList = data;
+          stockList = data;
         }
-        // console.log(fundList);
 
         init2();
       }
@@ -561,7 +559,7 @@
         let listStr = '';
         let totalMoney = 0;
         let totalEarnings = 0;
-        fundList.forEach((item, index) => {
+        stockList.forEach((item, index) => {
           const amount = item.amount || 0;
           const unitPrice = item.unitPrice || 0;
           const earningPercent = item.earningPercent || 0;
@@ -584,7 +582,7 @@
             item.name +
             '</div>' +
             '<div class="meta">' +
-            '<span class="fund-code">' +
+            '<span class="stock-code">' +
             item.code +
             '</span><span class="meta-sep">|</span><i class="' +
             (earningPercent > 0 ? 'red' : 'green') +
@@ -816,7 +814,7 @@
         $('#save').click(() => {
           // const ammountObj = {};
           let totalMoney = 0;
-          fundList.forEach((item) => {
+          stockList.forEach((item) => {
             let amount = $('#' + item.code).val();
             let unitPrice = $('#' + item.code + '_unit').val();
             let todayUnitPrice = $('#' + item.code + '_today_unit').val();
@@ -849,43 +847,7 @@
           init2();
           vscode.postMessage({
             command: 'success',
-            text: JSON.stringify(fundList),
-          });
-          return;
-
-          fetchInfo(fundList, ({ Expansion = {}, Datas = [] }) => {
-            const dates = [
-              Expansion?.FSRQ?.substr?.(5, 5),
-              Expansion?.GZTIME?.substr?.(5, 5),
-            ];
-            const result = [];
-            totalMoney = 0;
-            Datas.forEach((item) => {
-              const amount = ammountObj[item.FCODE].amount;
-              const unitPrice = ammountObj[item.FCODE].unitPrice;
-              const todayUnitPrice = ammountObj[item.FCODE].todayUnitPrice;
-              const isSellOut = ammountObj[item.FCODE].isSellOut;
-              const obj = {
-                code: item.FCODE,
-                name: item.SHORTNAME,
-                unitPrice: unitPrice, // 成本价
-                amount: amount, // 持仓金额
-                todayUnitPrice: todayUnitPrice, // 今日成本价
-                isSellOut: isSellOut, // 是否清仓
-                earnings: ammountObj[item.FCODE].earnings,
-                price: item.NAV, // 净值
-                priceDate: item.PDATE, // 净值时间
-                isUpdated: item.PDATE.substr(5, 5) === item.GZTIME.substr(5, 5),
-              };
-              totalMoney += amount;
-              result.push(obj);
-            });
-            $('#totalMoney').html(totalMoney.toFixed(2));
-            // 和 vscode webview 通信
-            vscode.postMessage({
-              command: 'success',
-              text: JSON.stringify(result),
-            });
+            text: JSON.stringify(stockList),
           });
         });
 
@@ -904,48 +866,6 @@
           });
         });
       });
-
-      function fetchInfo(fundList, cb) {
-        const params = {
-          pageIndex: 1,
-          pageSize: fundList.length,
-          plat: 'Android',
-          appType: 'ttjj',
-          product: 'EFund',
-          Version: 1,
-          deviceid: deviceId,
-          Fcodes: fundList
-            .reduce((arr, item) => [...arr, item.code], [])
-            .join(','),
-        };
-        if (!params.deviceid || !params.Fcodes) return;
-
-        const paramsArr = [];
-        for (let key in params) {
-          if (key && params[key]) {
-            paramsArr.push(key + '=' + params[key]);
-          }
-        }
-
-        window
-          .fetch(
-            'https://fundmobapi.eastmoney.com/FundMNewApi/FundMNFInfo?' +
-              paramsArr.join('&')
-          )
-          .then((res) => {
-            if (res.status !== 200) {
-              // console.log('获取数据失败');
-              vscode.postMessage({
-                command: 'alert',
-                text: '获取数据失败',
-              });
-              return;
-            }
-            res.json().then(function (d) {
-              cb(d);
-            });
-          });
-      }
 
       function convertBase64ToBlob(base64, type) {
         var bytes = window.atob(base64);

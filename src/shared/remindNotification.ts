@@ -2,7 +2,7 @@ import { commands, window } from 'vscode';
 import globalState from '../globalState';
 import { setStocksRemindCfgCb } from '../webview/leekCenterView';
 import { LeekTreeItem } from './leekTreeItem';
-import { FundInfo } from './typed';
+import { MarketItemInfo } from './typed';
 import { multi1000 } from './utils';
 
 export function executeStocksRemind(
@@ -15,7 +15,7 @@ export function executeStocksRemind(
   const stocksRemind = globalState.stocksRemind;
   const remindCodes = Object.keys(stocksRemind);
 
-  const oldStocksMap: Record<string, FundInfo> = {};
+  const oldStocksMap: Record<string, MarketItemInfo> = {};
   oldStockList.forEach(({ info }) => {
     oldStocksMap[info.code] = info;
   });
@@ -88,7 +88,7 @@ export function executeStocksRemind(
 }
 
 const _remindedCache: Record<string, boolean> = {};
-function showRemindNotice(info: FundInfo, msg: string) {
+function showRemindNotice(info: MarketItemInfo, msg: string) {
   const { code } = info;
   if (_remindedCache[code]) {
     return;

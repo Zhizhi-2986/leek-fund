@@ -2,7 +2,7 @@ import { Event, EventEmitter, TreeDataProvider, TreeItem, TreeItemCollapsibleSta
 // import { compact, flattenDeep, uniq } from 'lodash';
 import globalState from '../globalState';
 import { LeekTreeItem } from '../shared/leekTreeItem';
-import { defaultFundInfo, SortType, StockCategory } from '../shared/typed';
+import { defaultMarketInfo, SortType, StockCategory } from '../shared/typed';
 import { LeekFundConfig } from '../shared/leekConfig';
 import StockService from './stockService';
 
@@ -16,8 +16,6 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
   private expandAStock: boolean;
   private expandHKStock: boolean;
   private expandUSStock: boolean;
-  private expandCNFuture: boolean;
-  private expandOverseaFuture: boolean;
 
   constructor(service: StockService) {
     this.service = service;
@@ -25,8 +23,6 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     this.expandAStock = LeekFundConfig.getConfig('leek-fund.expandAStock', true);
     this.expandHKStock = LeekFundConfig.getConfig('leek-fund.expandHKStock', false);
     this.expandUSStock = LeekFundConfig.getConfig('leek-fund.expandUSStock', false);
-    this.expandCNFuture = LeekFundConfig.getConfig('leek-fund.expandCNFuture', false);
-    this.expandOverseaFuture = LeekFundConfig.getConfig('leek-fund.expandOverseaFuture', false);
   }
 
   refresh(): any {
@@ -52,10 +48,6 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
           return this.getHkStockNodes(resultPromise);
         case StockCategory.US:
           return this.getUsStockNodes(resultPromise);
-        case StockCategory.Future:
-          return this.getFutureStockNodes(resultPromise);
-        case StockCategory.OverseaFuture:
-          return this.getOverseaFutureStockNodes(resultPromise);
         case StockCategory.NODATA:
           return this.getNoDataStockNodes(resultPromise);
         default:
@@ -80,9 +72,7 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
         collapsibleState:
           (element.id === StockCategory.A && this.expandAStock) ||
           (element.id === StockCategory.HK && this.expandHKStock) ||
-          (element.id === StockCategory.US && this.expandUSStock) ||
-          (element.id === StockCategory.Future && this.expandCNFuture) ||
-          (element.id === StockCategory.OverseaFuture && this.expandCNFuture)
+          (element.id === StockCategory.US && this.expandUSStock)
             ? TreeItemCollapsibleState.Expanded
             : TreeItemCollapsibleState.Collapsed,
         // iconPath: this.parseIconPathFromProblemState(element),
@@ -95,7 +85,7 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
   getRootNodes(): LeekTreeItem[] {
     const nodes = [
       new LeekTreeItem(
-        Object.assign({ contextValue: 'category' }, defaultFundInfo, {
+        Object.assign({ contextValue: 'category' }, defaultMarketInfo, {
           id: StockCategory.A,
           name: `${StockCategory.A}${
             globalState.aStockCount > 0 ? `(${globalState.aStockCount})` : ''
@@ -105,7 +95,7 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
         true
       ),
       new LeekTreeItem(
-        Object.assign({ contextValue: 'category' }, defaultFundInfo, {
+        Object.assign({ contextValue: 'category' }, defaultMarketInfo, {
           id: StockCategory.HK,
           name: `${StockCategory.HK}${
             globalState.hkStockCount > 0 ? `(${globalState.hkStockCount})` : ''
@@ -115,30 +105,10 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
         true
       ),
       new LeekTreeItem(
-        Object.assign({ contextValue: 'category' }, defaultFundInfo, {
+        Object.assign({ contextValue: 'category' }, defaultMarketInfo, {
           id: StockCategory.US,
           name: `${StockCategory.US}${
             globalState.usStockCount > 0 ? `(${globalState.usStockCount})` : ''
-          }`,
-        }),
-        undefined,
-        true
-      ),
-      new LeekTreeItem(
-        Object.assign({ contextValue: 'category' }, defaultFundInfo, {
-          id: StockCategory.Future,
-          name: `${StockCategory.Future}${
-            globalState.cnfStockCount > 0 ? `(${globalState.cnfStockCount})` : ''
-          }`,
-        }),
-        undefined,
-        true
-      ),
-      new LeekTreeItem(
-        Object.assign({ contextValue: 'category' }, defaultFundInfo, {
-          id: StockCategory.OverseaFuture,
-          name: `${StockCategory.OverseaFuture}${
-            globalState.hfStockCount > 0 ? `(${globalState.hfStockCount})` : ''
           }`,
         }),
         undefined,
@@ -149,7 +119,7 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     if (globalState.noDataStockCount) {
       nodes.push(
         new LeekTreeItem(
-          Object.assign({ contextValue: 'category' }, defaultFundInfo, {
+          Object.assign({ contextValue: 'category' }, defaultMarketInfo, {
             id: StockCategory.NODATA,
             name: `${StockCategory.NODATA}(${globalState.noDataStockCount})`,
           }),
@@ -176,16 +146,6 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
   getUsStockNodes(stocks: Promise<LeekTreeItem[]>): Promise<LeekTreeItem[]> {
     return stocks.then((res: LeekTreeItem[]) =>
       res.filter((item: LeekTreeItem) => /^(usr_)/.test(item.type || ''))
-    );
-  }
-  getFutureStockNodes(stocks: Promise<LeekTreeItem[]>): Promise<LeekTreeItem[]> {
-    return stocks.then((res: LeekTreeItem[]) =>
-      res.filter((item: LeekTreeItem) => /^(nf_)/.test(item.type || ''))
-    );
-  }
-  getOverseaFutureStockNodes(stocks: Promise<LeekTreeItem[]>): Promise<LeekTreeItem[]> {
-    return stocks.then((res: LeekTreeItem[]) =>
-      res.filter((item: LeekTreeItem) => /^(hf_)/.test(item.type || ''))
     );
   }
   getNoDataStockNodes(stocks: Promise<LeekTreeItem[]>): Promise<LeekTreeItem[]> {
