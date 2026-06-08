@@ -5,16 +5,10 @@
  *-------------------------------------------------------------*/
 
 import { ConfigurationChangeEvent, ExtensionContext, TreeView, window, workspace } from 'vscode';
-import { BinanceProvider } from './explorer/binanceProvider';
-import BinanceService from './explorer/binanceService';
-import { ForexProvider } from './explorer/forexProvider';
-import { ForexService } from './explorer/forexService';
-import { NewsProvider } from './explorer/newsProvider';
 import { StockProvider } from './explorer/stockProvider';
 import StockService from './explorer/stockService';
-import globalState from './globalState';
+import globalState, { reloadFromConfig } from './globalState';
 import FlashNewsDaemon from './output/flash-news/FlashNewsDaemon';
-import FlashNewsOutputServer from './output/flash-news/FlashNewsOutputServer';
 import { registerCommandPaletteEvent, registerViewEvent } from './registerCommand';
 import { HolidayHelper } from './shared/holidayHelper';
 import { LeekFundConfig } from './shared/leekConfig';
@@ -22,22 +16,13 @@ import Log from './shared/log';
 import { Telemetry } from './shared/telemetry';
 import { SortType } from './shared/typed';
 import { events, isStockTime } from './shared/utils';
-import { ProfitStatusBar } from './statusbar/Profit';
 import { StatusBar } from './statusbar/statusBar';
-import { cacheStocksRemindData } from './webview/leekCenterView';
-import { cacheStockPriceData } from './webview/setStockPrice';
+import { cacheStocksRemindData } from './shared/stocksRemindConfig';
 import { startProxyServer } from './webview/proxyService/proxyService';
 import createEastMoneyDataServer from './service/eastmoney';
 
 let loopTimer: NodeJS.Timeout | null = null;
-let binanceLoopTimer: NodeJS.Timeout | null = null;
-let forexLoopTimer: NodeJS.Timeout | null = null;
 let stockTreeView: TreeView<any> | null = null;
-let forexTreeView: TreeView<any> | null = null;
-let binanceTreeView: TreeView<any> | null = null;
-
-let flashNewsOutputServer: FlashNewsOutputServer | null = null;
-let profitBar: ProfitStatusBar | null = null;
 
 export async function activate(context: ExtensionContext) {
   globalState.isDevelopment = process.env.NODE_ENV === 'development';
@@ -56,41 +41,16 @@ export async function activate(context: ExtensionContext) {
 
   setGlobalVariable();
 
-  flashNewsOutputServer = new FlashNewsOutputServer();
-
-  // 初始化选股宝快讯服务
-  FlashNewsDaemon.registerServer({
-    print: () => {},
-    destroy: () => {}
-  } as any);
-
   const stockService = new StockService(context);
-  const binanceService = new BinanceService(context);
-  const forexService = new ForexService(context);
 
   const nodeStockProvider = new StockProvider(stockService);
-  const binanceProvider = new BinanceProvider(binanceService);
-  const forexProvider = new ForexProvider(forexService);
-  const newsProvider = new NewsProvider();
 
   const statusBar = new StatusBar(stockService);
-  profitBar = new ProfitStatusBar();
 
   stockTreeView = window.createTreeView('leekFundView.stock', {
     treeDataProvider: nodeStockProvider,
-  });
-
-  binanceTreeView = window.createTreeView('leekFundView.binance', {
-    treeDataProvider: binanceProvider,
-  });
-
-  forexTreeView = window.createTreeView('leekFundView.forex', {
-    treeDataProvider: forexProvider,
-  });
-
-  window.createTreeView('leekFundView.news', {
-    treeDataProvider: newsProvider,
-  });
+    dragAndDropController: nodeStockProvider,
+  } as any);
 
   // fix when TreeView collapse https://github.com/giscafer/leek-fund/issues/31
   const manualRequest = () => {
@@ -136,32 +96,6 @@ export async function activate(context: ExtensionContext) {
     }
 
     loopTimer = setInterval(loopCallback, intervalTime);
-
-    /* 虚拟币不休市 */
-    if (binanceLoopTimer) {
-      clearInterval(binanceLoopTimer);
-      binanceLoopTimer = null;
-    }
-    binanceLoopTimer = setInterval(
-      () => {
-        if (binanceTreeView?.visible) {
-          binanceProvider.refresh();
-        }
-      },
-      // intervalTimeConfig < 3000 ? 3000 : intervalTimeConfig
-      300000 // 该功能存在网络问题（一些网络有vpn都无法请求通），这里故意设置长时间
-    );
-
-    /* 汇率变化轮询间隔2分钟 */
-    if (forexLoopTimer) {
-      clearTimeout(forexLoopTimer);
-      forexLoopTimer = null;
-    }
-    forexLoopTimer = setInterval(() => {
-      if (forexTreeView?.visible) {
-        forexProvider.refresh();
-      }
-    }, 120000);
   };
 
   setIntervalTime();
@@ -174,23 +108,14 @@ export async function activate(context: ExtensionContext) {
     setGlobalVariable();
     statusBar.refresh();
     nodeStockProvider.refresh();
-    newsProvider.refresh();
-    binanceProvider.refresh();
-    forexProvider.refresh();
-    flashNewsOutputServer?.reload();
     events.emit('onDidChangeConfiguration');
-    profitBar?.reload();
   });
 
   // register event
   registerViewEvent(
     context,
     stockService,
-    nodeStockProvider,
-    newsProvider,
-    flashNewsOutputServer,
-    binanceProvider,
-    forexProvider
+    nodeStockProvider
   );
 
   // register command
@@ -211,38 +136,16 @@ export async function activate(context: ExtensionContext) {
 }
 
 function setGlobalVariable() {
-  const stockPrice = LeekFundConfig.getConfig('leek-fund.stockPrice') || {};
-  cacheStockPriceData(stockPrice);
-
-  globalState.iconType = LeekFundConfig.getConfig('leek-fund.iconType') || 'arrow';
-
-  globalState.stockHeldTipShow = LeekFundConfig.getConfig('leek-fund.stockHeldTipShow') ?? true;
-
-  const stocksRemind = LeekFundConfig.getConfig('leek-fund.stocksRemind') || {};
-  cacheStocksRemindData(stocksRemind);
-
-  globalState.showEarnings = LeekFundConfig.getConfig('leek-fund.showEarnings');
-
-  globalState.remindSwitch = LeekFundConfig.getConfig('leek-fund.stockRemindSwitch');
-
-  globalState.kLineChartSwitch = LeekFundConfig.getConfig('leek-fund.stockKLineChartSwitch');
-
-  globalState.labelFormat = LeekFundConfig.getConfig('leek-fund.labelFormat');
-
-  globalState.immersiveBackground = LeekFundConfig.getConfig('leek-fund.immersiveBackground', true);
+  reloadFromConfig();
+  cacheStocksRemindData(globalState.stocksRemind);
 }
 
 // this method is called when your extension is deactivated
 export function deactivate() {
   Log.info('deactivate');
   FlashNewsDaemon.KillAllServer();
-  profitBar?.destroy();
   if (loopTimer) {
     clearInterval(loopTimer);
     loopTimer = null;
-  }
-  if (binanceLoopTimer) {
-    clearInterval(binanceLoopTimer);
-    binanceLoopTimer = null;
   }
 }

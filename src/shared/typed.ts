@@ -10,10 +10,6 @@ export enum SortType {
 export enum IconType {
   ARROW = 'arrow',
   ARROW1 = 'arrow1',
-  FOOD1 = 'food1',
-  FOOD2 = 'food2',
-  FOOD3 = 'food3',
-  ICON_FOOD = 'iconfood',
   NONE = 'none',
 }
 
@@ -56,20 +52,16 @@ export interface MarketItemInfo {
   low?: string | number;
   time?: string;
   updown?: string; // 涨跌值 price-yestclose
-  unitPrice?: number; // 成本价格
   priceDate?: string; // 价格日期
   yestPriceDate?: string; // 最新净值更新日期
   price?: string; // 当前价格
   volume?: string; // 成交量
   amount?: string | number; // 成交额
-  earnings?: number; // 盈亏
-  earningPercent?: number; // 盈亏率
   afterPrice?: string; // 盘后价格
   afterPercent?: string; // 盘后涨跌幅
   isStop?: boolean; // 停牌
   t2?: boolean;
   isUpdated?: boolean;
-  showEarnings?: boolean;
   isStock?: boolean;
   _itemType?: TreeItemType;
   spotBuyPrice?: number; // 现汇买入价
@@ -79,10 +71,6 @@ export interface MarketItemInfo {
   conversionPrice?: number; // 中行折算价
   publishDateTime?: string; // 发布日期：年月日 时分秒
   publishTime?: string; // 发布时间：时分秒
-  heldAmount?: number; // 持仓数
-  heldPrice?: number; // 持仓价
-  todayHeldPrice?: number; // 当日持仓价
-  isSellOut?: boolean; // 是否清仓
 }
 
 export const defaultMarketInfo: MarketItemInfo = {
@@ -99,13 +87,6 @@ export enum StockCategory {
   HK = 'HK Stock',
   NODATA = 'Not Support Stock',
 }
-
-export type HeldData = {
-  heldAmount?: number;
-  heldPrice?: number;
-  todayHeldPrice?: number;
-  isSellOut?: boolean;
-};
 
 export type ForexData = {
   name: string;

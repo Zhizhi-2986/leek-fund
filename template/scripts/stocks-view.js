@@ -363,19 +363,6 @@ vscode.postMessage({
   command: 'pageReady',
 });
 
-// 资金流向跳转
-const hstflowBtn = document.querySelector('#hstflowBtn');
-const mainflowBtn = document.querySelector('#mainflowBtn');
-hstflowBtn.onclick = function () {
-  vscode.postMessage({
-    command: 'hsgtMoneyFlow',
-  });
-};
-mainflowBtn.onclick = function () {
-  vscode.postMessage({
-    command: 'mainMoneyFlow',
-  });
-};
 // 社区
 document.querySelector('#tucaoBtn').onclick = function () {
   vscode.postMessage({

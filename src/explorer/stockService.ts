@@ -5,7 +5,6 @@ import globalState from '../globalState';
 import { LeekTreeItem } from '../shared/leekTreeItem';
 import { LeekFundConfig } from '../shared/leekConfig';
 import { executeStocksRemind } from '../shared/remindNotification';
-import { HeldData } from '../shared/typed';
 import { calcFixedPriceNumber, events, formatNumber, randHeader, sortData } from '../shared/utils';
 import { getXueQiuToken } from '../shared/xueqiu-helper';
 import { LeekService } from './leekService';
@@ -73,7 +72,6 @@ export default class StockService extends LeekService {
     executeStocksRemind(res, this.stockList);
     const oldStockList = this.stockList;
     this.stockList = res;
-    events.emit('updateBar:stock-profit-refresh', this);
     events.emit('stockListUpdate', this.stockList, oldStockList);
     return res;
   }
@@ -119,17 +117,6 @@ export default class StockService extends LeekService {
         }
       } else {
         const splitData = resp.data.split('";\n');
-        const stockPrice: {
-          [key: string]: {
-            amount: number;
-            earnings: number;
-            name: string;
-            price: string;
-            unitPrice: number;
-            todayUnitPrice: number;
-            isSellOut: boolean;
-          };
-        } = globalState.stockPrice;
 
         const estTime = momentTz().tz('America/New_York');
         // 判断美东时间的时间是否在4:00AM到9:30AM之间
@@ -175,15 +162,6 @@ export default class StockService extends LeekService {
               let high = params[4];
               let low = params[5];
               fixedNumber = calcFixedPriceNumber(open, yestclose, price, high, low);
-              const profitData = stockPrice[code] || {};
-              const heldData: HeldData = {};
-              if (profitData.amount) {
-                // 表示是持仓股
-                heldData.heldAmount = profitData.amount;
-                heldData.heldPrice = profitData.unitPrice;
-                heldData.todayHeldPrice = profitData.todayUnitPrice;
-                heldData.isSellOut = profitData.isSellOut;
-              }
 
               if (
                 Number(price) === 0 &&
@@ -217,7 +195,6 @@ export default class StockService extends LeekService {
                   time: `${params[30]} ${params[31]}`,
                   percent: '',
                   contextValue: this.getStockContextValue(code, statusBarStocks),
-                ...heldData,
                 };
                 aStockCount += 1;
               }
@@ -295,13 +272,6 @@ export default class StockService extends LeekService {
               let high = params[6];
               let low = params[7];
               fixedNumber = calcFixedPriceNumber(open, yestclose, price, high, low);
-              const profitData = stockPrice[code] || {};
-              const heldData: HeldData = {};
-              if (profitData.amount) {
-                // 表示是持仓股
-                heldData.heldAmount = profitData.amount;
-                heldData.heldPrice = profitData.unitPrice;
-              }
               stockItem = {
                 code,
                 name: params[0],
@@ -317,7 +287,6 @@ export default class StockService extends LeekService {
                 contextValue: this.getStockContextValue(code, statusBarStocks),
                 afterPrice: afterPrice ? formatNumber(afterPrice, fixedNumber, false) : '',
                 afterPercent: afterPercent,
-                ...heldData,
               };
               type = code.substr(0, 4);
               usStockCount += 1;
@@ -401,15 +370,6 @@ export default class StockService extends LeekService {
         return [];
       } else {
         const stocks = stockData;
-        const stockPrice: {
-          [key: string]: {
-            amount: number;
-            earnings: number;
-            name: string;
-            price: string;
-            unitPrice: number;
-          };
-        } = globalState.stockPrice;
         stocks.forEach((item: any) => {
           if (item.name === 'NODATA') {
             noDataStockCount += 1;
@@ -428,13 +388,6 @@ export default class StockService extends LeekService {
           }
           const { open, yestclose, price, high, low, volume, amount, time, code } = item;
           const fixedNumber = calcFixedPriceNumber(open, yestclose, price, high, low);
-          const profitData = stockPrice[code] || {};
-          const heldData: HeldData = {};
-          if (profitData.amount) {
-            // 表示是持仓股
-            heldData.heldAmount = profitData.amount;
-            heldData.heldPrice = profitData.unitPrice;
-          }
           const stockItem: any = {
             ...item,
             open: formatNumber(open, fixedNumber, false),
@@ -446,7 +399,6 @@ export default class StockService extends LeekService {
             amount: formatNumber(amount || 0, 2),
             percent: '',
             time: `${moment(time).format('YYYY-MM-DD HH:mm:ss')}`,
-            ...heldData,
           };
           hkStockCount += 1;
           if (stockItem) {

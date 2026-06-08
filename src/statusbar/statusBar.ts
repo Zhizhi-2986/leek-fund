@@ -14,11 +14,9 @@ import {
   randHeader,
 } from '../shared/utils';
 
-const STOCK_STATUS_BAR_PRIORITY = 3;
-const INDEX_STATUS_BAR_PRIORITY = 2;
-const MARKET_BREADTH_STATUS_BAR_PRIORITY = 1;
+const STOCK_STATUS_BAR_PRIORITY = 4;
+const INDEX_STATUS_BAR_START_PRIORITY = 3;
 const DEFAULT_STATUS_BAR_INDEX_CODES = ['sh000001', 'sz399006', 'sh000680'];
-const MARKET_BREADTH_URL = 'https://emdatah5.eastmoney.com/dc/NXFXB/GetUpDownData?type=0';
 
 type StatusBarIndexInfo = {
   code: string;
@@ -35,29 +33,14 @@ type StatusBarIndexInfo = {
   time: string;
 };
 
-type MarketBreadthInfo = {
-  up: number;
-  down: number;
-  flat: number;
-  total: number;
-  limitUp: number;
-  naturalLimitUp: number;
-  limitDown: number;
-  time: string;
-};
-
 export class StatusBar {
   private stockService: StockService;
   private stockBarItem: StatusBarItem | null = null;
-  private indexBarItem: StatusBarItem | null = null;
-  private marketBreadthBarItem: StatusBarItem | null = null;
+  private indexBarItems = new Map<string, StatusBarItem>();
   private carouselStocks: LeekTreeItem[] = [];
   private indexStocks: StatusBarIndexInfo[] = [];
-  private marketBreadthInfo: MarketBreadthInfo | null = null;
   private carouselIndex = 0;
-  private indexCarouselIndex = 0;
   private carouselTimer: NodeJS.Timeout | null = null;
-  private indexCarouselTimer: NodeJS.Timeout | null = null;
   private statusBarItemLabelFormat: string = '';
   constructor(stockService: StockService) {
     this.stockService = stockService;
@@ -102,7 +85,6 @@ export class StatusBar {
   refresh() {
     this.refreshStockStatusBar();
     this.refreshIndexStatusBar();
-    this.refreshMarketBreadthStatusBar();
   }
 
   /** 切换状态栏显示 */
@@ -209,8 +191,6 @@ export class StatusBar {
       amount,
       afterPrice,
       afterPercent,
-      heldAmount,
-      heldPrice,
     } = item.info;
     const deLow = percent.indexOf('-') === -1;
     // Respect hideStatusBarIcon config
@@ -220,17 +200,13 @@ export class StatusBar {
       percent: `${percent}%`,
       icon,
     });
-    let heldText = '';
-    if (heldAmount && heldPrice) {
-      heldText = `成本：${heldPrice}   持仓：${heldAmount}\n`;
-    }
     let afterText = '';
     if (afterPrice) {
       afterText = `盘后：${afterPrice}   涨跌幅：${afterPercent}%\n`;
     }
     stockBarItem.tooltip = `「今日行情」 ${
       item.info?.name ?? '今日行情'
-    }（${code}）\n涨跌：${updown}   百分：${percent}%\n最高：${high}   最低：${low}\n今开：${open}   昨收：${yestclose}\n${afterText}${heldText}成交额：${amount}\n更新时间：${
+    }（${code}）\n涨跌：${updown}   百分：${percent}%\n最高：${high}   最低：${low}\n今开：${open}   昨收：${yestclose}\n${afterText}成交额：${amount}\n更新时间：${
       item.info?.time
     }`;
     stockBarItem.color = deLow ? this.riseColor : this.fallColor;
@@ -246,36 +222,31 @@ export class StatusBar {
 
   private async refreshIndexStatusBar() {
     if (this.hideStatusBar) {
-      this.disposeIndexBar();
+      this.disposeIndexBars();
       return;
     }
-    if (this.indexStocks.length && this.indexBarItem) {
-      this.updateCurrentIndexBar();
+    if (this.indexStocks.length && this.indexBarItems.size) {
+      this.updateIndexBars();
     }
 
     try {
       const indexStocks = await this.fetchStatusBarIndexData();
       if (this.hideStatusBar) {
-        this.disposeIndexBar();
+        this.disposeIndexBars();
         return;
       }
 
       this.indexStocks = indexStocks;
       if (!this.indexStocks.length) {
-        this.disposeIndexBar();
+        this.disposeIndexBars();
         return;
       }
 
-      if (this.indexCarouselIndex >= this.indexStocks.length) {
-        this.indexCarouselIndex = 0;
-      }
-      this.ensureIndexBarItem();
-      this.updateCurrentIndexBar();
-      this.resetIndexCarouselTimer();
+      this.updateIndexBars();
     } catch (err) {
       console.error('refresh status bar index failed:', err);
       if (!this.indexStocks.length) {
-        this.disposeIndexBar();
+        this.disposeIndexBars();
       }
     }
   }
@@ -343,132 +314,53 @@ export class StatusBar {
     );
   }
 
-  private ensureIndexBarItem() {
-    if (!this.indexBarItem) {
-      this.indexBarItem = window.createStatusBarItem(
+  private ensureIndexBarItem(code: string, priority: number): StatusBarItem {
+    let indexBarItem = this.indexBarItems.get(code);
+    if (!indexBarItem) {
+      indexBarItem = window.createStatusBarItem(
         StatusBarAlignment.Left,
-        INDEX_STATUS_BAR_PRIORITY
+        priority
       );
+      this.indexBarItems.set(code, indexBarItem);
     }
+    return indexBarItem;
   }
 
-  private updateCurrentIndexBar() {
-    if (!this.indexBarItem || !this.indexStocks.length) return;
-    const item = this.indexStocks[this.indexCarouselIndex];
+  private updateIndexBars() {
+    const currentCodes = new Set(this.indexStocks.map(({ code }) => code));
+    this.indexBarItems.forEach((indexBarItem, code) => {
+      if (!currentCodes.has(code)) {
+        indexBarItem.hide();
+        indexBarItem.dispose();
+        this.indexBarItems.delete(code);
+      }
+    });
+
+    this.indexStocks.forEach((item, index) => {
+      const indexBarItem = this.ensureIndexBarItem(
+        item.code,
+        INDEX_STATUS_BAR_START_PRIORITY - index
+      );
+      this.updateIndexBar(indexBarItem, item);
+    });
+  }
+
+  private updateIndexBar(indexBarItem: StatusBarItem, item: StatusBarIndexInfo) {
     const isRise = item.updownValue >= 0;
     const icon = this.hideStatusBarIcon ? '' : isRise ? '📈 ' : '📉 ';
-    this.indexBarItem.text = `${icon}${item.name} ${item.price}（${item.percent}%）`;
-    this.indexBarItem.color = isRise ? this.riseColor : this.fallColor;
-    this.indexBarItem.tooltip = `「指数行情」 ${item.name}（${item.code}）\n涨跌：${item.updown}   百分：${item.percent}%\n最高：${item.high}   最低：${item.low}\n今开：${item.open}   昨收：${item.yestclose}\n成交额：${item.amount}\n更新时间：${item.time}`;
-    this.indexBarItem.command = undefined;
-    this.indexBarItem.show();
+    indexBarItem.text = `${icon}${item.name} ${item.price}（${item.percent}%）`;
+    indexBarItem.color = isRise ? this.riseColor : this.fallColor;
+    indexBarItem.tooltip = `「指数行情」 ${item.name}（${item.code}）\n涨跌：${item.updown}   百分：${item.percent}%\n最高：${item.high}   最低：${item.low}\n今开：${item.open}   昨收：${item.yestclose}\n成交额：${item.amount}\n更新时间：${item.time}`;
+    indexBarItem.command = undefined;
+    indexBarItem.show();
   }
 
-  private resetIndexCarouselTimer() {
-    this.stopIndexCarouselTimer();
-    if (this.indexStocks.length <= 1) return;
-    this.indexCarouselTimer = setInterval(() => {
-      this.indexCarouselIndex = (this.indexCarouselIndex + 1) % this.indexStocks.length;
-      this.updateCurrentIndexBar();
-    }, this.carouselInterval);
-  }
-
-  private stopIndexCarouselTimer() {
-    if (this.indexCarouselTimer) {
-      clearInterval(this.indexCarouselTimer);
-      this.indexCarouselTimer = null;
-    }
-  }
-
-  private disposeIndexBar() {
-    this.stopIndexCarouselTimer();
+  private disposeIndexBars() {
     this.indexStocks = [];
-    this.indexCarouselIndex = 0;
-    this.indexBarItem?.hide();
-    this.indexBarItem?.dispose();
-    this.indexBarItem = null;
-  }
-
-  private async refreshMarketBreadthStatusBar() {
-    if (this.hideStatusBar) {
-      this.disposeMarketBreadthBar();
-      return;
-    }
-    if (this.marketBreadthInfo && this.marketBreadthBarItem) {
-      this.updateMarketBreadthBar();
-    }
-
-    try {
-      const info = await this.fetchMarketBreadthData();
-      if (this.hideStatusBar) {
-        this.disposeMarketBreadthBar();
-        return;
-      }
-      if (!info) {
-        if (!this.marketBreadthInfo) {
-          this.disposeMarketBreadthBar();
-        }
-        return;
-      }
-
-      this.marketBreadthInfo = info;
-      this.ensureMarketBreadthBarItem();
-      this.updateMarketBreadthBar();
-    } catch (err) {
-      console.error('refresh market breadth status bar failed:', err);
-      if (!this.marketBreadthInfo) {
-        this.disposeMarketBreadthBar();
-      }
-    }
-  }
-
-  private async fetchMarketBreadthData(): Promise<MarketBreadthInfo | null> {
-    const resp = await Axios.get<any[]>(MARKET_BREADTH_URL, {
-      headers: randHeader(),
+    this.indexBarItems.forEach((indexBarItem) => {
+      indexBarItem.hide();
+      indexBarItem.dispose();
     });
-    const data = Array.isArray(resp.data) ? resp.data[0] : null;
-    if (!data) return null;
-
-    const up = Number(data.up || 0);
-    const down = Number(data.down || 0);
-    const flat = Number(data.r0 || 0);
-    return {
-      up,
-      down,
-      flat,
-      total: up + down + flat,
-      limitUp: Number(data.t || 0),
-      naturalLimitUp: Number(data.tn || 0),
-      limitDown: Number(data.b || 0),
-      time: data.time ? String(data.time) : '',
-    };
-  }
-
-  private ensureMarketBreadthBarItem() {
-    if (!this.marketBreadthBarItem) {
-      this.marketBreadthBarItem = window.createStatusBarItem(
-        StatusBarAlignment.Left,
-        MARKET_BREADTH_STATUS_BAR_PRIORITY
-      );
-    }
-  }
-
-  private updateMarketBreadthBar() {
-    if (!this.marketBreadthBarItem || !this.marketBreadthInfo) return;
-    const { up, down, flat, total, limitUp, naturalLimitUp, limitDown, time } =
-      this.marketBreadthInfo;
-    const icon = this.hideStatusBarIcon ? '' : '📊 ';
-    this.marketBreadthBarItem.text = `${icon}全A 涨${up} 跌${down} 平${flat}`;
-    this.marketBreadthBarItem.color = up >= down ? this.riseColor : this.fallColor;
-    this.marketBreadthBarItem.tooltip = `「全市场涨跌统计」\n全部：${total}\n上涨：${up}   下跌：${down}   平盘：${flat}\n涨停：${limitUp}   自然涨停：${naturalLimitUp}   跌停：${limitDown}\n更新时间：${time}`;
-    this.marketBreadthBarItem.command = undefined;
-    this.marketBreadthBarItem.show();
-  }
-
-  private disposeMarketBreadthBar() {
-    this.marketBreadthInfo = null;
-    this.marketBreadthBarItem?.hide();
-    this.marketBreadthBarItem?.dispose();
-    this.marketBreadthBarItem = null;
+    this.indexBarItems.clear();
   }
 }

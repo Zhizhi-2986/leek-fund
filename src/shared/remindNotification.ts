@@ -1,6 +1,6 @@
 import { commands, window } from 'vscode';
 import globalState from '../globalState';
-import { setStocksRemindCfgCb } from '../webview/leekCenterView';
+import { setStocksRemindCfgCb } from './stocksRemindConfig';
 import { LeekTreeItem } from './leekTreeItem';
 import { MarketItemInfo } from './typed';
 import { multi1000 } from './utils';

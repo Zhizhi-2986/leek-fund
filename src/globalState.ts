@@ -1,5 +1,6 @@
 import { ExtensionContext } from 'vscode';
 import { DEFAULT_LABEL_FORMAT } from './shared/constant';
+import { LeekFundConfig } from './shared/leekConfig';
 import { Telemetry } from './shared/telemetry';
 import { ForexData } from './shared/typed';
 
@@ -12,14 +13,11 @@ let telemetry: Telemetry | any = null;
 let iconType = 'arrow';
 
 let stocksRemind: Record<string, any> = {};
-let showEarnings = 1; // 是否展示盈亏
 let remindSwitch = 1; // 是否打开提示
-let kLineChartSwitch = 0; // k线图类型 1筹码分布K线图，0常规k线图
+let kLineChartSwitch = 0; // k线图类型（会话级，不持久化）
 let newsIntervalTime = 20000; // 新闻刷新频率（毫秒）
 let newsIntervalTimer: NodeJS.Timer | any = null; // 计算器控制
 let labelFormat = DEFAULT_LABEL_FORMAT;
-
-let stockHeldTipShow = true; // 是否开启股票持仓提示
 
 let aStockCount = 0;
 let usStockCount = 0;
@@ -31,9 +29,6 @@ let showStockErrorInfo = true; // 控制只显示一次错误弹窗（临时处�
 let immersiveBackground = true; // 图表是否沉浸式背景
 
 let isDevelopment = false; // 是否开发环境
-
-let stockPrice = {}; // 缓存数据
-let stockPriceCacheDate = '2020-10-30';
 
 let forexList: Array<ForexData> = []; // 外汇信息
 
@@ -50,12 +45,19 @@ let xuanGuBaoNews: {
   allDayMessages: []
 };
 
+export function reloadFromConfig() {
+  iconType = LeekFundConfig.getConfig('leek-fund.iconType') || 'arrow';
+  remindSwitch = LeekFundConfig.getConfig('leek-fund.stockRemindSwitch');
+  labelFormat = LeekFundConfig.getConfig('leek-fund.labelFormat');
+  immersiveBackground = LeekFundConfig.getConfig('leek-fund.immersiveBackground', true);
+  stocksRemind = LeekFundConfig.getConfig('leek-fund.stocksRemind') || {};
+}
+
 export default {
   context,
   telemetry,
   iconType,
   deviceId,
-  showEarnings,
   newsIntervalTime,
   newsIntervalTimer,
   aStockCount,
@@ -73,11 +75,6 @@ export default {
   showStockErrorInfo,
   immersiveBackground,
   isDevelopment,
-
-  stockPrice,
-  stockPriceCacheDate,
-
-  stockHeldTipShow,
 
   forexList,
 

@@ -30,7 +30,7 @@ export class Telemetry {
 
     this.amplitude = new Amplitude('d3c2366d3c3e0712bdf2efdb3dd498c2');
 
-    let extension = vscode.extensions.getExtension('giscafer.leek-fund');
+    let extension = vscode.extensions.getExtension('Zhizhi.stockInfo');
     let extensionVersion = extension ? extension.packageJSON.version : '<none>';
 
     // Store

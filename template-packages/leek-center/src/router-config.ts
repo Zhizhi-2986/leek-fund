@@ -13,7 +13,6 @@ const routes: RouteProps[] = [
     path: '/data-center',
     component: DataCenter,
   },
-
   {
     path: '/news',
     component: FlashNewsView,

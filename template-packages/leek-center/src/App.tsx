@@ -7,7 +7,7 @@ const { Content } = Layout;
 
 function App() {
   const location = useLocation();
-  const hideLayoutPaths = ['/ai-config', '/xuangubao-news'];
+  const hideLayoutPaths = ['/xuangubao-news'];
   const isHideLayout = hideLayoutPaths.includes(location.pathname);
 
   return (
