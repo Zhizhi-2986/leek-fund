@@ -86,6 +86,10 @@
         "icon": "$(eye)"
       },
       {
+        "command": "leek-fund.setStockStatusBar",
+        "title": "选择状态栏轮播股票"
+      },
+      {
         "command": "leek-fund.toggleStatusBarVisibility",
         "title": "LeekFund: Toggle Status Bar Visibility"
       },
@@ -124,6 +128,16 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "leek-fund.showStockInStatusBar",
+          "when": "false"
+        },
+        {
+          "command": "leek-fund.hideStockFromStatusBar",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "leek-fund.refreshStock",

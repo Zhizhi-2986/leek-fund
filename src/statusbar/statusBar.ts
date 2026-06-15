@@ -213,7 +213,7 @@ export class StatusBar {
     stockBarItem.command = {
       title: 'Change stock',
       command: 'leek-fund.changeStatusBarItem',
-      arguments: [item.id],
+      arguments: [item.info.code],
     };
 
     stockBarItem.show();

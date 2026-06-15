@@ -103,11 +103,30 @@ export async function activate(context: ExtensionContext) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   workspace.onDidChangeConfiguration((e: ConfigurationChangeEvent) => {
     Log.info('Configuration changed');
+    const statusBarStockChanged = e.affectsConfiguration('leek-fund.statusBarStock');
+    const stockBarVisibilityChanged = e.affectsConfiguration('leek-fund.hideStatusBarStock');
+    const stockConfigChanged = e.affectsConfiguration('leek-fund.stocks');
+    const statusBarSelectionChanged = statusBarStockChanged || stockBarVisibilityChanged;
+    const indexStatusBarChanged =
+      e.affectsConfiguration('leek-fund.hideStatusBar') ||
+      e.affectsConfiguration('leek-fund.hideStatusBarIcon') ||
+      e.affectsConfiguration('leek-fund.riseColor') ||
+      e.affectsConfiguration('leek-fund.fallColor');
+
     intervalTimeConfig = LeekFundConfig.getConfig('leek-fund.interval');
     setIntervalTime();
     setGlobalVariable();
-    statusBar.refresh();
-    nodeStockProvider.refresh();
+    if (statusBarStockChanged) {
+      nodeStockProvider.refreshStatusBarContext();
+    }
+    if (statusBarSelectionChanged && !indexStatusBarChanged) {
+      statusBar.refreshStockStatusBar();
+    } else {
+      statusBar.refresh();
+    }
+    if (!statusBarSelectionChanged || stockConfigChanged) {
+      nodeStockProvider.refresh();
+    }
     events.emit('onDidChangeConfiguration');
   });
 

@@ -32,6 +32,13 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     this._onDidChangeTreeData.fire(undefined);
   }
 
+  refreshStatusBarContext(): void {
+    this.service.syncStatusBarContext();
+    this.service.stockList.forEach((stock) => {
+      this._onDidChangeTreeData.fire(stock);
+    });
+  }
+
   getChildren(element?: LeekTreeItem | undefined): LeekTreeItem[] | Thenable<LeekTreeItem[]> {
     if (!element) {
       // Root view

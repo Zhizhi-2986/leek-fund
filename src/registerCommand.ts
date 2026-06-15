@@ -30,6 +30,14 @@ import stockWindVane from './webview/stockWindVane';
 import tucaoForum from './webview/tucaoForum';
 import { StatusBar } from './statusbar/statusBar';
 
+function getTargetStockCode(target: LeekTreeItem | undefined): string | undefined {
+  const code = target?.info?.code;
+  if (!code) {
+    window.showWarningMessage('请从股票列表中选择股票。');
+  }
+  return code;
+}
+
 export function registerViewEvent(
   context: ExtensionContext,
   stockService: StockService,
@@ -54,16 +62,16 @@ export function registerViewEvent(
   );
   context.subscriptions.push(
     commands.registerCommand('leek-fund.showStockInStatusBar', (target) => {
-      LeekFundConfig.setStatusBarStockVisibleCfg(target.id, true, () => {
-        stockProvider.refresh();
-      });
+      const code = getTargetStockCode(target);
+      if (!code) return;
+      LeekFundConfig.setStatusBarStockVisibleCfg(code, true);
     })
   );
   context.subscriptions.push(
     commands.registerCommand('leek-fund.hideStockFromStatusBar', (target) => {
-      LeekFundConfig.setStatusBarStockVisibleCfg(target.id, false, () => {
-        stockProvider.refresh();
-      });
+      const code = getTargetStockCode(target);
+      if (!code) return;
+      LeekFundConfig.setStatusBarStockVisibleCfg(code, false);
     })
   );
   context.subscriptions.push(
@@ -127,6 +135,10 @@ export function registerViewEvent(
   context.subscriptions.push(
     commands.registerCommand('leek-fund.setStockStatusBar', () => {
       const stockList = stockService.stockList;
+      if (!stockList.length) {
+        window.showWarningMessage('股票数据尚未加载，无法设置状态栏轮播股票。');
+        return;
+      }
       const statusBarStocks: string[] = LeekFundConfig.getConfig('leek-fund.statusBarStock') || [];
       const stockNameList = stockList.map((item: LeekTreeItem) => {
         return {
@@ -294,7 +306,7 @@ export function registerViewEvent(
     commands.registerCommand('leek-fund.changeStatusBarItem', (stockId) => {
       const stockList = stockService.stockList;
       const stockNameList = stockList
-        .filter((stock) => stock.id !== stockId)
+        .filter((stock) => stock.info.code !== stockId)
         .map((item: LeekTreeItem) => {
           return {
             label: `${item.info.name}`,

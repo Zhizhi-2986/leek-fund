@@ -72,8 +72,19 @@ export default class StockService extends LeekService {
     executeStocksRemind(res, this.stockList);
     const oldStockList = this.stockList;
     this.stockList = res;
+    this.syncStatusBarContext();
     events.emit('stockListUpdate', this.stockList, oldStockList);
     return res;
+  }
+
+  syncStatusBarContext(
+    statusBarStocks: string[] = LeekFundConfig.getConfig('leek-fund.statusBarStock') || []
+  ): void {
+    this.stockList.forEach((stock) => {
+      if (stock.contextValue !== 'nodata') {
+        stock.contextValue = this.getStockContextValue(stock.info.code, statusBarStocks);
+      }
+    });
   }
 
   async getStockData(codes: Array<string>): Promise<Array<LeekTreeItem>> {
@@ -85,7 +96,6 @@ export default class StockService extends LeekService {
     let usStockCount = 0;
     let noDataStockCount = 0;
     let stockList: Array<LeekTreeItem> = [];
-    const statusBarStocks: string[] = LeekFundConfig.getConfig('leek-fund.statusBarStock') || [];
 
     const url = `https://hq.sinajs.cn/list=${codes
       .map((code) => code.replace('.', '$')) // 新浪接口中点号替换为$
@@ -194,7 +204,7 @@ export default class StockService extends LeekService {
                   amount: formatNumber(params[9], 2),
                   time: `${params[30]} ${params[31]}`,
                   percent: '',
-                  contextValue: this.getStockContextValue(code, statusBarStocks),
+                  contextValue: 'statusBarStockHidden',
                 };
                 aStockCount += 1;
               }
@@ -217,7 +227,7 @@ export default class StockService extends LeekService {
                 volume: formatNumber(params[10], 2),
                 amount: '接口无数据',
                 percent: '',
-                contextValue: this.getStockContextValue(code, statusBarStocks),
+                contextValue: 'statusBarStockHidden',
               };
               type = code.substr(0, 3);
               noDataStockCount += 1;
@@ -284,7 +294,7 @@ export default class StockService extends LeekService {
                 amount: '接口无数据',
                 time: params[3],
                 percent: '',
-                contextValue: this.getStockContextValue(code, statusBarStocks),
+                contextValue: 'statusBarStockHidden',
                 afterPrice: afterPrice ? formatNumber(afterPrice, fixedNumber, false) : '',
                 afterPercent: afterPercent,
               };
@@ -362,7 +372,6 @@ export default class StockService extends LeekService {
     let hkStockCount = 0;
     let noDataStockCount = 0;
     let stockList: Array<LeekTreeItem> = [];
-    const statusBarStocks: string[] = LeekFundConfig.getConfig('leek-fund.statusBarStock') || [];
 
     try {
       const stockData = await getTencentHKStockData(codes);
@@ -386,7 +395,7 @@ export default class StockService extends LeekService {
             stockList.push(treeItem);
             return;
           }
-          const { open, yestclose, price, high, low, volume, amount, time, code } = item;
+          const { open, yestclose, price, high, low, volume, amount, time } = item;
           const fixedNumber = calcFixedPriceNumber(open, yestclose, price, high, low);
           const stockItem: any = {
             ...item,
@@ -412,7 +421,7 @@ export default class StockService extends LeekService {
             stockItem.isStock = true;
             stockItem.type = 'hk';
             stockItem.symbol = stockItem.code.replace('hk', '');
-            stockItem.contextValue = this.getStockContextValue(code, statusBarStocks);
+            stockItem.contextValue = 'statusBarStockHidden';
             stockItem.updown = formatNumber(+price - +yestclose, fixedNumber, false);
             stockItem.percent =
               (stockItem.updown >= 0 ? '+' : '-') +
