@@ -59,6 +59,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "leek-fund.createStockGroup",
+        "title": "创建分组",
+        "icon": "$(new-folder)"
+      },
+      {
         "command": "leek-fund.refreshStock",
         "title": "刷新数据",
         "icon": "$(refresh)"
@@ -148,22 +153,32 @@
           "command": "leek-fund.addStock",
           "when": "view == leekFundView.stock",
           "group": "navigation"
+        },
+        {
+          "command": "leek-fund.createStockGroup",
+          "when": "view == leekFundView.stock",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "leek-fund.setStockTop",
-          "when": "view == leekFundView.stock && viewItem != category  && viewItem!=nodata",
+          "command": "leek-fund.createStockGroup",
+          "when": "view == leekFundView.stock && viewItem == category",
           "group": "group1"
         },
         {
           "command": "leek-fund.setStockTop",
-          "when": "view == leekFundView.stock && viewItem != category && viewItem!=nodata",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
+          "group": "group1"
+        },
+        {
+          "command": "leek-fund.setStockTop",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
           "group": "inline"
         },
         {
           "command": "leek-fund.deleteStock",
-          "when": "view == leekFundView.stock  && viewItem != category",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin",
           "group": "group5"
         },
         {
@@ -194,6 +209,11 @@
             "usr_inx"
           ],
           "description": "配置需要监控的股票代码（建议通过界面新增）"
+        },
+        "leek-fund.stockGroups": {
+          "type": "array",
+          "default": [],
+          "description": "股票树自定义分组配置。建议通过界面创建和拖动调整。"
         },
         "leek-fund.stocksRemind": {
           "type": "object",

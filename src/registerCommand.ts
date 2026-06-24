@@ -22,6 +22,7 @@ import StockService from './explorer/stockService';
 import globalState from './globalState';
 import { LeekFundConfig } from './shared/leekConfig';
 import { LeekTreeItem } from './shared/leekTreeItem';
+import { StockCategory } from './shared/typed';
 import { colorOptionList, randomColor } from './shared/utils';
 
 import { StatusBar } from './statusbar/statusBar';
@@ -29,11 +30,52 @@ import stockDetailView from './webview/stockDetailView';
 import strategyCenter from './webview/strategyCenter';
 
 function getTargetStockCode(target: LeekTreeItem | undefined): string | undefined {
+  if (target?.isCategory || target?.isStockGroup) {
+    window.showWarningMessage('请从股票列表中选择股票。');
+    return undefined;
+  }
   const code = target?.info?.code;
   if (!code) {
     window.showWarningMessage('请从股票列表中选择股票。');
   }
   return code;
+}
+
+function isMarketStockCategory(category: StockCategory | undefined): category is StockCategory.A | StockCategory.HK | StockCategory.US {
+  return category === StockCategory.A || category === StockCategory.HK || category === StockCategory.US;
+}
+
+function getStockCategoryFromTarget(target: LeekTreeItem | undefined): StockCategory.A | StockCategory.HK | StockCategory.US | undefined {
+  if (!target) return undefined;
+  if (target.isStockGroup && isMarketStockCategory(target.stockGroupCategory)) {
+    return target.stockGroupCategory;
+  }
+  if (target.isCategory && isMarketStockCategory(target.id as StockCategory)) {
+    return target.id as StockCategory.A | StockCategory.HK | StockCategory.US;
+  }
+  const code = target.info?.code || String(target.id || '');
+  if (/^(sh|sz|bj)/.test(code)) return StockCategory.A;
+  if (/^(hk)/.test(code)) return StockCategory.HK;
+  if (/^(usr_)/.test(code)) return StockCategory.US;
+  return undefined;
+}
+
+async function pickStockGroupCategory(
+  target: LeekTreeItem | undefined
+): Promise<StockCategory.A | StockCategory.HK | StockCategory.US | undefined> {
+  const targetCategory = getStockCategoryFromTarget(target);
+  if (targetCategory) return targetCategory;
+  const categoryItem = await window.showQuickPick(
+    [
+      { label: 'A 股', description: StockCategory.A },
+      { label: '港股', description: StockCategory.HK },
+      { label: '美股', description: StockCategory.US },
+    ],
+    {
+      placeHolder: '选择分组所属市场',
+    }
+  );
+  return categoryItem?.description as StockCategory.A | StockCategory.HK | StockCategory.US | undefined;
 }
 
 export function registerViewEvent(
@@ -53,6 +95,7 @@ export function registerViewEvent(
   );
   context.subscriptions.push(
     commands.registerCommand('leek-fund.deleteStock', (target) => {
+      if (target?.isCategory || target?.isStockGroup) return;
       LeekFundConfig.removeStockCfg(target.id, () => {
         stockProvider.refresh();
       });
@@ -112,9 +155,33 @@ export function registerViewEvent(
       });
     })
   );
+  context.subscriptions.push(
+    commands.registerCommand('leek-fund.createStockGroup', async (target?: LeekTreeItem) => {
+      const category = await pickStockGroupCategory(target);
+      if (!category) return;
+      const groups = LeekFundConfig.getStockGroups();
+      const name = await window.showInputBox({
+        prompt: '输入股票分组名称',
+        placeHolder: '例如：短线观察',
+        validateInput: (value) => {
+          const trimmed = value.trim();
+          if (!trimmed) return '分组名称不能为空';
+          if (groups.some((group) => group.category === category && group.name === trimmed)) {
+            return '同一市场分类下分组名称不能重复';
+          }
+          return undefined;
+        },
+      });
+      if (!name) return;
+      LeekFundConfig.createStockGroup(name, category, () => {
+        stockProvider.refresh();
+      });
+    })
+  );
   // 股票置顶
   context.subscriptions.push(
     commands.registerCommand('leek-fund.setStockTop', (target) => {
+      if (target?.isCategory || target?.isStockGroup) return;
       LeekFundConfig.setStockTopCfg(target.id, () => {
         stockProvider.refresh();
       });

@@ -118,6 +118,13 @@ export enum StockCategory {
   NODATA = 'Not Support Stock',
 }
 
+export interface StockGroupConfig {
+  id: string;
+  name: string;
+  category: StockCategory.A | StockCategory.HK | StockCategory.US;
+  stockCodes: string[];
+}
+
 export type ForexData = {
   name: string;
   filter: ((code: string) => boolean) | RegExp;

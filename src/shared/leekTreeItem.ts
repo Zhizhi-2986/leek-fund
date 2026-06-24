@@ -1,20 +1,37 @@
 import { join } from 'path';
 import { ExtensionContext, TreeItem, TreeItemCollapsibleState } from 'vscode';
 import globalState from '../globalState';
-import { IconType, MarketItemInfo, TreeItemType } from './typed';
+import { IconType, MarketItemInfo, StockCategory, TreeItemType } from './typed';
 import { toFixed } from './utils';
+
+type LeekTreeItemOptions = {
+  isStockGroup?: boolean;
+  stockGroupId?: string;
+  stockGroupCategory?: StockCategory;
+};
 
 export class LeekTreeItem extends TreeItem {
   info: MarketItemInfo;
   type: string | undefined;
   isCategory: boolean;
+  isStockGroup: boolean;
+  stockGroupId: string | undefined;
+  stockGroupCategory: StockCategory | undefined;
   contextValue: string | undefined;
   _itemType?: TreeItemType;
 
-  constructor(info: MarketItemInfo, context: ExtensionContext | undefined, isCategory = false) {
+  constructor(
+    info: MarketItemInfo,
+    context: ExtensionContext | undefined,
+    isCategory = false,
+    options: LeekTreeItemOptions = {}
+  ) {
     super('', TreeItemCollapsibleState.None);
     this.info = info;
     this.isCategory = isCategory;
+    this.isStockGroup = Boolean(options.isStockGroup);
+    this.stockGroupId = options.stockGroupId;
+    this.stockGroupCategory = options.stockGroupCategory;
     const {
       showLabel,
       isStock,
@@ -108,7 +125,7 @@ export class LeekTreeItem extends TreeItem {
         if (type === 'nodata') {
           text = info.name;
         } else {
-          text = `「${name}」`;
+          text = `「${name}」 ${code}`;
           desc = `${risePercent}  ${price}`;
         }
       } else if (isBinanceItem) {
@@ -160,7 +177,7 @@ export class LeekTreeItem extends TreeItem {
       if (type === 'nodata') {
         this.tooltip = '接口不支持，右键删除关注';
       } else {
-        this.tooltip = `【今日行情】${labelText}${typeText}${symbol}\n 涨跌：${updown}   百分比：${_percent}%\n 最高：${high}   最低：${low}\n 今开：${open}   昨收：${yestclose}${
+        this.tooltip = `【今日行情】${labelText || name}(${code}) ${typeText}${symbol}\n 涨跌：${updown}   百分比：${_percent}%\n 最高：${high}   最低：${low}\n 今开：${open}   昨收：${yestclose}${
           afterPrice ? `\n 盘后：${afterPrice}   涨跌幅：${afterPercent}%` : ''
         }\n 成交量：${volume}   成交额：${amount}`;
       }

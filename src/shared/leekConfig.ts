@@ -6,6 +6,7 @@
 import { window, workspace } from 'vscode';
 import { uniq, events } from './utils';
 import { compact, flattenDeep } from 'lodash';
+import { StockCategory, StockGroupConfig } from './typed';
 
 export class BaseConfig {
   /**
@@ -63,6 +64,60 @@ export class LeekFundConfig extends BaseConfig {
   }
 
   // Stock Begin
+  static getStockGroups(): StockGroupConfig[] {
+    const groups = this.getConfig('leek-fund.stockGroups', []);
+    if (!Array.isArray(groups)) {
+      return [];
+    }
+
+    return groups
+      .map((group: any) => this.normalizeStockGroup(group))
+      .filter((group: StockGroupConfig | undefined): group is StockGroupConfig => Boolean(group));
+  }
+
+  static setStockGroups(groups: StockGroupConfig[]) {
+    return this.setConfig(
+      'leek-fund.stockGroups',
+      groups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        category: group.category,
+        stockCodes: uniq(group.stockCodes || []),
+      }))
+    );
+  }
+
+  static createStockGroup(
+    name: string,
+    category: StockGroupConfig['category'],
+    cb?: Function
+  ) {
+    const trimmedName = name.trim();
+    const groups = this.getStockGroups();
+    const exists = groups.some(
+      (group) => group.category === category && group.name === trimmedName
+    );
+    if (exists) {
+      window.showWarningMessage(`分组「${trimmedName}」已存在。`);
+      return Promise.resolve(groups);
+    }
+
+    const group: StockGroupConfig = {
+      id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: trimmedName,
+      category,
+      stockCodes: [],
+    };
+    const nextGroups = [...groups, group];
+    return this.setStockGroups(nextGroups).then(() => {
+      window.showInformationMessage(`股票分组创建成功。`);
+      if (cb && typeof cb === 'function') {
+        cb(group, nextGroups);
+      }
+      return nextGroups;
+    });
+  }
+
   static updateStockCfg(list: string, cb?: Function) {
     const cfgKey = 'leek-fund.stocks';
     const config = this.getGlobalConfig();
@@ -86,10 +141,12 @@ export class LeekFundConfig extends BaseConfig {
 
   static removeStockCfg(code: string, cb?: Function) {
     this.removeConfig('leek-fund.stocks', code).then(() => {
-      window.showInformationMessage(`Stock Successfully delete.`);
-      if (cb && typeof cb === 'function') {
-        cb(code);
-      }
+      this.removeStockFromGroups(code).then(() => {
+        window.showInformationMessage(`Stock Successfully delete.`);
+        if (cb && typeof cb === 'function') {
+          cb(code);
+        }
+      });
     });
   }
 
@@ -130,11 +187,60 @@ export class LeekFundConfig extends BaseConfig {
     stockList.unshift(code);
 
     this.setConfig('leek-fund.stocks', stockList).then(() => {
-      window.showInformationMessage(`Stock successfully set to top.`);
-      if (cb && typeof cb === 'function') {
-        cb(code);
-      }
+      const groups = this.getStockGroups();
+      const nextGroups = groups.map((group) => {
+        if (!group.stockCodes.includes(code)) {
+          return group;
+        }
+        return {
+          ...group,
+          stockCodes: [code, ...group.stockCodes.filter((item) => item !== code)],
+        };
+      });
+      const groupChanged = JSON.stringify(groups) !== JSON.stringify(nextGroups);
+      const updateGroups = groupChanged ? this.setStockGroups(nextGroups) : Promise.resolve();
+      updateGroups.then(() => {
+        window.showInformationMessage(`Stock successfully set to top.`);
+        if (cb && typeof cb === 'function') {
+          cb(code);
+        }
+      });
     });
+  }
+
+  private static normalizeStockGroup(group: any): StockGroupConfig | undefined {
+    if (!group || typeof group !== 'object') {
+      return undefined;
+    }
+    if (![StockCategory.A, StockCategory.HK, StockCategory.US].includes(group.category)) {
+      return undefined;
+    }
+    const id = typeof group.id === 'string' ? group.id.trim() : '';
+    const name = typeof group.name === 'string' ? group.name.trim() : '';
+    if (!id || !name) {
+      return undefined;
+    }
+    const stockCodes: string[] = Array.isArray(group.stockCodes)
+      ? (uniq(group.stockCodes.filter((code: any) => typeof code === 'string' && code)) as string[])
+      : [];
+    return {
+      id,
+      name,
+      category: group.category,
+      stockCodes,
+    };
+  }
+
+  private static removeStockFromGroups(code: string) {
+    const groups = this.getStockGroups();
+    const nextGroups = groups.map((group) => ({
+      ...group,
+      stockCodes: group.stockCodes.filter((item) => item !== code),
+    }));
+    if (JSON.stringify(groups) === JSON.stringify(nextGroups)) {
+      return Promise.resolve();
+    }
+    return this.setStockGroups(nextGroups);
   }
 
   // Stock End
