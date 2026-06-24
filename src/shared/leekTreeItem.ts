@@ -142,6 +142,15 @@ export class LeekTreeItem extends TreeItem {
         this.command.command = '';
       }
     }
+    if (!isCategory && isStockItem && type !== 'nodata' && /^(sh|sz|bj)\d{6}$/.test(code || '')) {
+      this.command = {
+        title: name,
+        command: 'leek-fund.openStockDetail',
+        arguments: [
+          code,
+        ],
+      };
+    }
 
     if (isStockItem) {
       const labelText = !showLabel ? name : '';

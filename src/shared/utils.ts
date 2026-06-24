@@ -475,7 +475,21 @@ export function formatLabelString(str: string, params: Record<string, any>) {
           formatMatch[3] ? parseInt(formatMatch[3]) : undefined
         );
       } else {
-        return String(params[$1]);
+        // 获取占位符名称
+        const placeholder = $1.trim();
+        let value = params[placeholder];
+
+        // 如果值是数字，进行格式化
+        if (typeof value === 'number' && !isNaN(value)) {
+          // 对价格相关字段保留合理小数位
+          if (['price', 'open', 'high', 'low', 'yestclose', 'updown'].includes(placeholder)) {
+            value = formatNumber(value, 2, false);
+          } else if (['volume', 'amount'].includes(placeholder)) {
+            value = formatNumber(value, 2, true);
+          }
+        }
+
+        return String(value ?? '');
       }
     });
   } catch (err) {

@@ -13,6 +13,36 @@ export enum IconType {
   NONE = 'none',
 }
 
+/** 提醒类型枚举 */
+export enum RemindType {
+  PRICE_ABOVE = 'price1', // 价格上涨到
+  PRICE_BELOW = 'price0', // 价格下跌到
+  PERCENT_RISE = 'percent1', // 日涨幅达
+  PERCENT_FALL = 'percent0', // 日跌幅达
+  VOLUME_RATIO = 'volume_ratio', // 成交量放大倍数
+  PRICE_CHANGE = 'price_change', // 价格变动超过N元
+  HIGH_BREAK = 'high_break', // 价格突破日内高点
+  LOW_BREAK = 'low_break', // 价格跌破日内低点
+}
+
+/** 提醒条件配置 */
+export interface StockRemindCondition {
+  // 现有字段
+  price1?: number; // 价格上涨到
+  price0?: number; // 价格下跌到
+  percent1?: number; // 日涨幅达（如 5 表示涨 5%）
+  percent0?: number; // 日跌幅达（如 -5 表示跌 5%）
+
+  // 新增字段
+  volume_ratio?: number; // 成交量放大倍数（如 1.5 表示成交量是昨日的1.5倍）
+  price_change?: number; // 价格变动超过N元（如 1.0 表示变动超过1元）
+  high_break?: boolean; // 价格突破日内高点时提醒
+  low_break?: boolean; // 价格跌破日内低点时提醒
+}
+
+/** 个股提醒配置（单个股票的完整提醒配置） */
+export type StockRemindConfig = Partial<Record<string, StockRemindCondition>>;
+
 /** Tree Item Type */
 export enum TreeItemType {
   /** 股票 */

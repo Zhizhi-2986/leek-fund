@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-cmn-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>股票详情</title>
+    <link rel="stylesheet" href="styles/stock-detail.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="sidebar__title">我的 A 股</div>
+        <div id="stockList" class="stock-list"></div>
+      </aside>
+
+      <main class="main">
+        <header class="header">
+          <div>
+            <h1 id="stockName">股票详情</h1>
+            <div id="stockCode" class="muted">请选择左侧股票</div>
+          </div>
+          <div id="lastUpdated" class="muted"></div>
+        </header>
+
+        <div id="message" class="message">加载中...</div>
+
+        <section class="grid">
+          <article class="panel panel--wide">
+            <div class="panel__head">
+              <h2>日 K 图</h2>
+              <span class="muted">最近 100 条日 K</span>
+            </div>
+            <canvas id="dailyKChart" width="980" height="360"></canvas>
+          </article>
+
+          <article class="panel panel--wide">
+            <div class="panel__head">
+              <h2>当日分时图</h2>
+              <span class="muted">1 分钟聚合</span>
+            </div>
+            <canvas id="minuteChart" width="980" height="260"></canvas>
+          </article>
+
+          <article class="panel">
+            <div class="panel__head">
+              <h2>买卖五档</h2>
+              <span class="muted">卖五至买五</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>档位</th>
+                  <th>价格</th>
+                  <th>挂单量</th>
+                </tr>
+              </thead>
+              <tbody id="orderBookBody"></tbody>
+            </table>
+          </article>
+
+          <article class="panel">
+            <div class="panel__head">
+              <h2>分时成交明细</h2>
+              <span class="muted">最新 30 条，倒序</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>价格</th>
+                  <th>成交量</th>
+                  <th>方向</th>
+                </tr>
+              </thead>
+              <tbody id="tradeBody"></tbody>
+            </table>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script src="scripts/stock-detail.js"></script>
+  </body>
+</html>

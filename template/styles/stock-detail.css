@@ -1,0 +1,206 @@
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  background: #1f2329;
+  color: #d6dae0;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button {
+  font: inherit;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid #3a414d;
+  background: #252a32;
+  overflow: auto;
+}
+
+.sidebar__title {
+  padding: 14px;
+  border-bottom: 1px solid #3a414d;
+  color: #f1f3f5;
+  font-weight: 600;
+}
+
+.stock-list {
+  display: grid;
+}
+
+.stock-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid #303743;
+  background: transparent;
+  color: #d6dae0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.stock-item:hover,
+.stock-item.active {
+  background: #303743;
+}
+
+.stock-item strong {
+  font-weight: 600;
+}
+
+.stock-item em {
+  grid-column: 1 / -1;
+  color: #8993a1;
+  font-style: normal;
+}
+
+.main {
+  min-width: 0;
+  padding: 14px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+h1 {
+  font-size: 22px;
+}
+
+h2 {
+  font-size: 15px;
+}
+
+.muted {
+  color: #8993a1;
+  font-size: 12px;
+}
+
+.message {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #4a5260;
+  border-radius: 4px;
+  background: #20242b;
+  color: #c5cad3;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+  gap: 12px;
+}
+
+.panel {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #3a414d;
+  border-radius: 6px;
+  background: #282c34;
+}
+
+.panel--wide {
+  grid-column: 1 / -1;
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  background: #20242b;
+  border: 1px solid #303743;
+  border-radius: 4px;
+}
+
+#dailyKChart {
+  height: 360px;
+}
+
+#minuteChart {
+  height: 260px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #3a414d;
+  text-align: right;
+  white-space: nowrap;
+}
+
+th:first-child,
+td:first-child {
+  text-align: left;
+}
+
+th {
+  color: #8993a1;
+  font-weight: 600;
+}
+
+.up td,
+.up {
+  color: #e06c75;
+}
+
+.down td,
+.down {
+  color: #98c379;
+}
+
+.flat td,
+.flat {
+  color: #d6dae0;
+}
+
+.empty,
+.empty-cell {
+  padding: 14px;
+  color: #8993a1;
+  text-align: center;
+}
+
+@media (max-width: 920px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid #3a414d;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

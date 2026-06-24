@@ -259,7 +259,7 @@
           "default": {
             "statusBarLabelFormat": "「${name}」${price} ${icon}（${percent}）"
           },
-          "description": "修改底部状态栏显示格式。支持 ${name} ${price} ${icon} ${percent} 占位符"
+          "description": "修改底部状态栏显示格式。支持占位符：${name}(名称), ${code}(代码), ${price}(现价), ${percent}(涨跌幅), ${icon}(图标), ${updown}(涨跌值), ${open}(开盘价), ${high}(最高价), ${low}(最低价), ${yestclose}(昨收价), ${volume}(成交量), ${amount}(成交额), ${time}(更新时间)。支持过滤器：${name | padRight}（右对齐填充）"
         },
         "leek-fund.immersiveBackground": {
           "type": "boolean",

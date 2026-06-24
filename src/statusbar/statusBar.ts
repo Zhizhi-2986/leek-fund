@@ -189,26 +189,44 @@ export class StatusBar {
       low,
       updown,
       amount,
+      volume,
       afterPrice,
       afterPercent,
+      time,
+      name,
     } = item.info;
     const deLow = percent.indexOf('-') === -1;
     // Respect hideStatusBarIcon config
     const icon = this.hideStatusBarIcon ? '' : (deLow ? '📈' : '📉');
+
+    // 格式化 updown 加上符号
+    const updownFormatted = updown
+      ? `${updown.startsWith('-') ? '' : '+'}${updown}`
+      : '';
+
     stockBarItem.text = formatLabelString(this.statusBarItemLabelFormat, {
       ...item.info,
+      name,
+      code,
+      price: item.info.price,
       percent: `${percent}%`,
       icon,
+      updown: updownFormatted,
+      open: open || '0',
+      high: high || '0',
+      low: low || '0',
+      yestclose: yestclose || '0',
+      volume: volume || '0',
+      amount: amount || '0',
+      time: time || '',
     });
     let afterText = '';
     if (afterPrice) {
       afterText = `盘后：${afterPrice}   涨跌幅：${afterPercent}%\n`;
     }
     stockBarItem.tooltip = `「今日行情」 ${
-      item.info?.name ?? '今日行情'
-    }（${code}）\n涨跌：${updown}   百分：${percent}%\n最高：${high}   最低：${low}\n今开：${open}   昨收：${yestclose}\n${afterText}成交额：${amount}\n更新时间：${
-      item.info?.time
-    }`;
+      name ?? '今日行情'
+    }（${code}）\n涨跌：${updown}   百分：${percent}%\n最高：${high}   最低：${low}\n今开：${open}   昨收：${yestclose}\n${afterText}成交额：${amount}\n更新时间：${time}`;
     stockBarItem.color = deLow ? this.riseColor : this.fallColor;
     stockBarItem.command = {
       title: 'Change stock',

@@ -22,13 +22,11 @@ import StockService from './explorer/stockService';
 import globalState from './globalState';
 import { LeekFundConfig } from './shared/leekConfig';
 import { LeekTreeItem } from './shared/leekTreeItem';
-// import checkForUpdate from './shared/update';
 import { colorOptionList, randomColor } from './shared/utils';
-import donate from './webview/donate';
 
-import stockWindVane from './webview/stockWindVane';
-import tucaoForum from './webview/tucaoForum';
 import { StatusBar } from './statusbar/statusBar';
+import stockDetailView from './webview/stockDetailView';
+import strategyCenter from './webview/strategyCenter';
 
 function getTargetStockCode(target: LeekTreeItem | undefined): string | undefined {
   const code = target?.info?.code;
@@ -286,14 +284,6 @@ export function registerViewEvent(
     })
   );
 
-  context.subscriptions.push(commands.registerCommand('leek-fund.donate', () => donate(context)));
-  context.subscriptions.push(commands.registerCommand('leek-fund.tucaoForum', () => tucaoForum()));
-
-  // 选股风向标
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.stockWindVane', () => stockWindVane())
-  );
-
   context.subscriptions.push(
     commands.registerCommand('leek-fund.toggleRemindSwitch', (on?: number) => {
       const newValue = on !== undefined ? (on ? 1 : 0) : globalState.remindSwitch === 1 ? 0 : 1;
@@ -358,6 +348,19 @@ export function registerViewEvent(
     commands.registerCommand('leek-fund.immersiveBackground', (isChecked: boolean) => {
       LeekFundConfig.setConfig('leek-fund.immersiveBackground', isChecked);
       globalState.immersiveBackground = isChecked;
+    })
+  );
+
+  context.subscriptions.push(
+    commands.registerCommand('leek-fund.stockWindVane', () => {
+      strategyCenter(stockService);
+    })
+  );
+  context.subscriptions.push(
+    commands.registerCommand('leek-fund.openStockDetail', (target) => {
+      const code = typeof target === 'string' ? target : getTargetStockCode(target);
+      if (!code) return;
+      stockDetailView(stockService, code);
     })
   );
 
@@ -519,14 +522,6 @@ export function registerViewEvent(
     })
   );
 
-
-  // 选股宝快讯命令
-  context.subscriptions.push(
-    commands.registerCommand('leek-fund.xuangubaoNews', () => {
-      const { XuanGuBaoNewsView } = require('./webview/xuangubao-news');
-      XuanGuBaoNewsView.getInstance().show();
-    })
-  );
   // checkForUpdate();
 }
 

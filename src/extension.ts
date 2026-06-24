@@ -8,7 +8,6 @@ import { ConfigurationChangeEvent, ExtensionContext, TreeView, window, workspace
 import { StockProvider } from './explorer/stockProvider';
 import StockService from './explorer/stockService';
 import globalState, { reloadFromConfig } from './globalState';
-import FlashNewsDaemon from './output/flash-news/FlashNewsDaemon';
 import { registerCommandPaletteEvent, registerViewEvent } from './registerCommand';
 import { HolidayHelper } from './shared/holidayHelper';
 import { LeekFundConfig } from './shared/leekConfig';
@@ -18,8 +17,7 @@ import { SortType } from './shared/typed';
 import { events, isStockTime } from './shared/utils';
 import { StatusBar } from './statusbar/statusBar';
 import { cacheStocksRemindData } from './shared/stocksRemindConfig';
-import { startProxyServer } from './webview/proxyService/proxyService';
-import createEastMoneyDataServer from './service/eastmoney';
+import { startStrategyScheduler, stopStrategyScheduler } from './shared/strategyScheduler';
 
 let loopTimer: NodeJS.Timeout | null = null;
 let stockTreeView: TreeView<any> | null = null;
@@ -42,6 +40,7 @@ export async function activate(context: ExtensionContext) {
   setGlobalVariable();
 
   const stockService = new StockService(context);
+  startStrategyScheduler(stockService);
 
   const nodeStockProvider = new StockProvider(stockService);
 
@@ -140,16 +139,6 @@ export async function activate(context: ExtensionContext) {
   // register command
   registerCommandPaletteEvent(context, statusBar);
 
-  // start local proxy server
-  try {
-    await startProxyServer();
-  } catch (e) {
-    window.showErrorMessage('代理服务启动失败，选股风向标功能可能无法使用。');
-    Log.error(`Start Proxy Server Error: ${e}`);
-  }
-  // start eastmoney data server
-  createEastMoneyDataServer();
-
   // Telemetry Event
   telemetry.sendEvent('activate');
 }
@@ -162,7 +151,7 @@ function setGlobalVariable() {
 // this method is called when your extension is deactivated
 export function deactivate() {
   Log.info('deactivate');
-  FlashNewsDaemon.KillAllServer();
+  stopStrategyScheduler();
   if (loopTimer) {
     clearInterval(loopTimer);
     loopTimer = null;

@@ -82,26 +82,54 @@
                           添加新的预警
                         </div>
                         <form style="padding-bottom: 20px" id="newRemindForm">
-                          <label class="d-input">
-                            <span class="label">价格上涨到</span>
-                            <input value="" type="text" name="price1" />
-                            <span class="unit">元</span>
-                          </label>
-                          <label class="d-input">
-                            <span class="label">价格下跌到</span>
-                            <input value="" type="text" name="price0" />
-                            <span class="unit">元</span>
-                          </label>
-                          <label class="d-input">
-                            <span class="label">日涨幅达</span>
-                            <input value="" type="text" name="percent1" />
-                            <span class="unit">%</span>
-                          </label>
-                          <label class="d-input">
-                            <span class="label">日跌幅达</span>
-                            <input value="" type="text" name="percent0" />
-                            <span class="unit">%</span>
-                          </label>
+                          <!-- 基础价格提醒 -->
+                          <div class="remind-section">
+                            <div class="remind-section-title">基础提醒</div>
+                            <label class="d-input">
+                              <span class="label">价格上涨到</span>
+                              <input value="" type="text" name="price1" placeholder="如：1800" />
+                              <span class="unit">元</span>
+                            </label>
+                            <label class="d-input">
+                              <span class="label">价格下跌到</span>
+                              <input value="" type="text" name="price0" placeholder="如：1750" />
+                              <span class="unit">元</span>
+                            </label>
+                            <label class="d-input">
+                              <span class="label">日涨幅达</span>
+                              <input value="" type="text" name="percent1" placeholder="如：5" />
+                              <span class="unit">%</span>
+                            </label>
+                            <label class="d-input">
+                              <span class="label">日跌幅达</span>
+                              <input value="" type="text" name="percent0" placeholder="如：-3" />
+                              <span class="unit">%</span>
+                            </label>
+                          </div>
+
+                          <!-- 智能提醒 -->
+                          <div class="remind-section">
+                            <div class="remind-section-title">智能提醒</div>
+                            <label class="d-input">
+                              <span class="label">成交量放大</span>
+                              <input value="" type="text" name="volume_ratio" placeholder="倍数，如：1.5" />
+                              <span class="unit">倍</span>
+                            </label>
+                            <label class="d-input">
+                              <span class="label">价格变动超</span>
+                              <input value="" type="text" name="price_change" placeholder="金额，如：1.0" />
+                              <span class="unit">元</span>
+                            </label>
+                            <label class="d-input checkbox-input">
+                              <input type="checkbox" name="high_break" value="true" />
+                              <span class="label">突破日内高点提醒</span>
+                            </label>
+                            <label class="d-input checkbox-input">
+                              <input type="checkbox" name="low_break" value="true" />
+                              <span class="label">跌破日内低点提醒</span>
+                            </label>
+                          </div>
+
                           <div style="padding-bottom: 100px">
                             <button
                               type="submit"
@@ -127,7 +155,54 @@
                   class="el-col el-col-sm-12 el-col-md-16 el-col-xl-18"
                   style="overflow-x: auto"
                 >
-                  由于暂时未找到稳定的评论服务，评论服务暂时下架
+                  <!-- 技术分析区域 -->
+                  <div id="techAnalysisSection" class="tech-analysis-section" style="display: none;">
+                    <h3>技术分析</h3>
+
+                    <!-- K线周期切换 -->
+                    <div class="kline-tabs">
+                      <button class="kline-tab active" data-period="daily">日K</button>
+                      <button class="kline-tab" data-period="weekly">周K</button>
+                      <button class="kline-tab" data-period="monthly">月K</button>
+                    </div>
+
+                    <!-- K线图表容器 -->
+                    <div class="kline-chart-container">
+                      <div id="klineChart" class="kline-chart"></div>
+                      <div id="klineLoading" class="loading-overlay" style="display: none;">
+                        加载中...
+                      </div>
+                    </div>
+
+                    <!-- 技术指标展示 -->
+                    <div class="indicators-panel">
+                      <div class="indicator-card">
+                        <div class="indicator-title">MA 均线</div>
+                        <div class="indicator-value" id="maValue">--</div>
+                        <div class="indicator-sub" id="maSub">MA5 / MA10 / MA20 / MA60</div>
+                      </div>
+                      <div class="indicator-card">
+                        <div class="indicator-title">RSI 强弱</div>
+                        <div class="indicator-value" id="rsiValue">--</div>
+                        <div class="indicator-sub">RSI6 / RSI12 / RSI24</div>
+                      </div>
+                      <div class="indicator-card">
+                        <div class="indicator-title">MACD 趋势</div>
+                        <div class="indicator-value" id="macdValue">--</div>
+                        <div class="indicator-sub">DIF / DEA / BAR</div>
+                      </div>
+                      <div class="indicator-card">
+                        <div class="indicator-title">BOLL 布林带</div>
+                        <div class="indicator-value" id="bollValue">--</div>
+                        <div class="indicator-sub">上轨 / 中轨 / 下轨</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 原有评论区域（临时隐藏） -->
+                  <div id="commentPlaceholder" style="display: none;">
+                    由于暂时未找到稳定的评论服务，评论服务暂时下架
+                  </div>
                 </div>
               </div>
             </div>
@@ -193,6 +268,7 @@
     <script src="https://cdn.bootcdn.net/ajax/libs/art-template/4.13.2/lib/template-web.min.js"></script>
     <script src="https://cdn.staticfile.org/jquery/2.0.0/jquery.min.js"></script>
     <script src="https://cdn.bootcdn.net/ajax/libs/lodash.js/4.17.20/lodash.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
     <script src="scripts/stocks-view.js"></script>
   </body>
 </html>

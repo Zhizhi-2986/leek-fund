@@ -6,7 +6,6 @@ import { LeekTreeItem } from '../shared/leekTreeItem';
 import { LeekFundConfig } from '../shared/leekConfig';
 import { executeStocksRemind } from '../shared/remindNotification';
 import { calcFixedPriceNumber, events, formatNumber, randHeader, sortData } from '../shared/utils';
-import { getXueQiuToken } from '../shared/xueqiu-helper';
 import { LeekService } from './leekService';
 import moment = require('moment');
 import momentTz = require('moment-timezone');
@@ -16,7 +15,6 @@ import { getTencentHKStockData, searchStockList } from '../shared/tencentStock';
 export default class StockService extends LeekService {
   public stockList: Array<LeekTreeItem> = [];
   private context: ExtensionContext;
-  private token: string = '';
 
   constructor(context: ExtensionContext) {
     super();
@@ -30,13 +28,6 @@ export default class StockService extends LeekService {
     const s = 'sh000001,sh000300,sh000016,sh000688,usr_ixic,usr_dji,usr_inx';
     const maps = s.split(',');
     return this.stockList.filter((item) => !maps.includes(item.info.code));
-  }
-
-  async getToken(): Promise<string> {
-    if (this.token !== '') return this.token;
-    const res = await getXueQiuToken();
-    this.token = res;
-    return this.token;
   }
 
   async getData(codes: Array<string>, order: number): Promise<Array<LeekTreeItem>> {

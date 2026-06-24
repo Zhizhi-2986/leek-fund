@@ -1,0 +1,290 @@
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  background: #1f2329;
+  color: #d6dae0;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.app {
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #3a414d;
+  background: #282c34;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 22px;
+}
+
+h2 {
+  font-size: 16px;
+}
+
+h3 {
+  font-size: 14px;
+  margin: 12px 0 8px;
+}
+
+h4 {
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: #f1f3f5;
+}
+
+.topbar p {
+  margin-top: 4px;
+  color: #9aa4b2;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(320px, 0.72fr);
+  gap: 14px;
+  padding: 14px;
+}
+
+.panel {
+  min-width: 0;
+  padding: 14px;
+  background: #282c34;
+  border: 1px solid #3a414d;
+  border-radius: 6px;
+}
+
+.panel--wide {
+  grid-column: 1 / -1;
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.muted {
+  color: #8993a1;
+  font-size: 12px;
+}
+
+.primary-btn,
+.link-btn {
+  border: 1px solid #4c8dff;
+  border-radius: 4px;
+  color: #ffffff;
+  background: #2f6fed;
+  cursor: pointer;
+}
+
+.primary-btn {
+  height: 32px;
+  padding: 0 12px;
+}
+
+.primary-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.link-btn {
+  height: 26px;
+  padding: 0 8px;
+  background: transparent;
+  color: #7fb0ff;
+}
+
+.holding-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.account-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.account-form label {
+  display: grid;
+  gap: 4px;
+  color: #9aa4b2;
+}
+
+input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  color: #f1f3f5;
+  background: #1f2329;
+  border: 1px solid #4a5260;
+  border-radius: 4px;
+  outline: none;
+}
+
+input:focus {
+  border-color: #4c8dff;
+}
+
+.table-wrap {
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 8px;
+  border-bottom: 1px solid #3a414d;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: #9aa4b2;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.empty,
+.empty-cell {
+  color: #8993a1;
+  text-align: center;
+}
+
+.notice {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #4a5260;
+  border-radius: 4px;
+  background: #20242b;
+}
+
+.notice--ok {
+  border-color: #3a7f55;
+}
+
+.notice--watch {
+  border-color: #b08a34;
+}
+
+.notice--risk {
+  border-color: #b7525a;
+}
+
+.monitor-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.monitor-item {
+  padding: 12px;
+  border: 1px solid #3a414d;
+  border-radius: 6px;
+  background: #20242b;
+}
+
+.monitor-item--ok {
+  border-color: #3a7f55;
+}
+
+.monitor-item--watch {
+  border-color: #b08a34;
+}
+
+.monitor-item--risk {
+  border-color: #b7525a;
+}
+
+.monitor-item__head,
+.monitor-item__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.monitor-item__head span,
+.monitor-item__metrics {
+  color: #9aa4b2;
+}
+
+.monitor-item__head em {
+  margin-left: auto;
+  font-style: normal;
+  color: #f1f3f5;
+}
+
+.monitor-item ul,
+.rule-block ul,
+.compact-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.compact-list {
+  min-width: 220px;
+}
+
+.strategy-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.rule-block {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #3a414d;
+}
+
+.checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px 20px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+@media (max-width: 980px) {
+  .content,
+  .strategy-grid,
+  .account-form {
+    grid-template-columns: 1fr;
+  }
+
+  .holding-form {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
