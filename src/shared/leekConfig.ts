@@ -8,6 +8,8 @@ import { uniq, events } from './utils';
 import { compact, flattenDeep } from 'lodash';
 import { StockCategory, StockGroupConfig } from './typed';
 
+type StockGroupMoveDirection = 'up' | 'down' | 'top' | 'bottom';
+
 export class BaseConfig {
   /**
    * 获取全局（用户）配置对象
@@ -113,6 +115,115 @@ export class LeekFundConfig extends BaseConfig {
       window.showInformationMessage(`股票分组创建成功。`);
       if (cb && typeof cb === 'function') {
         cb(group, nextGroups);
+      }
+      return nextGroups;
+    });
+  }
+
+  static moveStockGroup(
+    groupId: string,
+    direction: StockGroupMoveDirection,
+    cb?: Function
+  ) {
+    const groups = this.getStockGroups();
+    const group = groups.find((item) => item.id === groupId);
+    if (!group) {
+      window.showWarningMessage(`未找到股票分组。`);
+      return Promise.resolve(groups);
+    }
+
+    const categoryGroups = groups.filter((item) => item.category === group.category);
+    const currentIndex = categoryGroups.findIndex((item) => item.id === groupId);
+    let nextIndex = currentIndex;
+    if (direction === 'up') {
+      nextIndex = Math.max(0, currentIndex - 1);
+    } else if (direction === 'down') {
+      nextIndex = Math.min(categoryGroups.length - 1, currentIndex + 1);
+    } else if (direction === 'top') {
+      nextIndex = 0;
+    } else if (direction === 'bottom') {
+      nextIndex = categoryGroups.length - 1;
+    }
+
+    if (nextIndex === currentIndex) {
+      window.showInformationMessage(`分组顺序未变化。`);
+      return Promise.resolve(groups);
+    }
+
+    const nextCategoryGroups = [...categoryGroups];
+    const [movingGroup] = nextCategoryGroups.splice(currentIndex, 1);
+    nextCategoryGroups.splice(nextIndex, 0, movingGroup);
+
+    let categoryIndex = 0;
+    const nextGroups = groups.map((item) => {
+      if (item.category !== group.category) {
+        return item;
+      }
+      const nextGroup = nextCategoryGroups[categoryIndex];
+      categoryIndex += 1;
+      return nextGroup;
+    });
+
+    return this.setStockGroups(nextGroups).then(() => {
+      window.showInformationMessage(`股票分组顺序已更新。`);
+      if (cb && typeof cb === 'function') {
+        cb(group, nextGroups);
+      }
+      return nextGroups;
+    });
+  }
+
+  static deleteStockGroup(groupId: string, cb?: Function) {
+    const groups = this.getStockGroups();
+    const group = groups.find((item) => item.id === groupId);
+    if (!group) {
+      window.showWarningMessage(`未找到股票分组。`);
+      return Promise.resolve(groups);
+    }
+
+    const nextGroups = groups.filter((item) => item.id !== groupId);
+    return this.setStockGroups(nextGroups).then(() => {
+      window.showInformationMessage(`股票分组已删除，组内股票不会删除。`);
+      if (cb && typeof cb === 'function') {
+        cb(group, nextGroups);
+      }
+      return nextGroups;
+    });
+  }
+
+  static setStockGroupForStock(code: string, groupId: string | undefined, cb?: Function) {
+    const groups = this.getStockGroups();
+    const targetGroup = groupId ? groups.find((item) => item.id === groupId) : undefined;
+    if (groupId && !targetGroup) {
+      window.showWarningMessage(`未找到股票分组。`);
+      return Promise.resolve(groups);
+    }
+
+    const nextGroups = groups.map((group) => {
+      const withoutStock = group.stockCodes.filter((item) => item !== code);
+      if (group.id !== groupId) {
+        return {
+          ...group,
+          stockCodes: withoutStock,
+        };
+      }
+      return {
+        ...group,
+        stockCodes: group.stockCodes.includes(code) ? group.stockCodes : [...withoutStock, code],
+      };
+    });
+
+    if (JSON.stringify(groups) === JSON.stringify(nextGroups)) {
+      window.showInformationMessage(`股票分组未变化。`);
+      return Promise.resolve(groups);
+    }
+
+    return this.setStockGroups(nextGroups).then(() => {
+      window.showInformationMessage(
+        targetGroup ? `已移动到分组「${targetGroup.name}」。` : `已移动到未分组。`
+      );
+      if (cb && typeof cb === 'function') {
+        cb(code, targetGroup, nextGroups);
       }
       return nextGroups;
     });

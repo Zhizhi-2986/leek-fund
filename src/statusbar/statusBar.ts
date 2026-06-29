@@ -16,7 +16,7 @@ import {
 
 const STOCK_STATUS_BAR_PRIORITY = 4;
 const INDEX_STATUS_BAR_START_PRIORITY = 3;
-const DEFAULT_STATUS_BAR_INDEX_CODES = ['sh000001', 'sz399006', 'sh000680'];
+const DEFAULT_STATUS_BAR_INDEX_CODES = ['sh000001', 'sz399006', 'sh000680', 'int_nikkei', 'b_KOSPI'];
 
 type StatusBarIndexInfo = {
   code: string;
@@ -292,44 +292,111 @@ export class StatusBar {
         if (!match) return;
         const code = match[1].replace('$', '.');
         const params = match[2].split(',');
-        if (params.length <= 5 || !params[0]) return;
-
-        const open = params[1] || '0';
-        const yestclose = params[2] || '0';
-        const price = params[3] || '0';
-        const high = params[4] || '0';
-        const low = params[5] || '0';
-        const fixedNumber = calcFixedPriceNumber(open, yestclose, price, high, low);
-        const openValue = Number(open);
-        const priceValue = Number(price);
-        const yestcloseValue = Number(yestclose);
-        const highValue = Number(high);
-        const lowValue = Number(low);
-        const updownValue = priceValue - yestcloseValue;
-        const percentValue = yestcloseValue
-          ? (Math.abs(updownValue) / yestcloseValue) * 100
-          : 0;
-        const sign = updownValue >= 0 ? '+' : '-';
-
-        indexMap.set(code, {
-          code,
-          name: params[0],
-          open: formatNumber(openValue, fixedNumber, false),
-          yestclose: formatNumber(yestcloseValue, fixedNumber, false),
-          price: formatNumber(priceValue, fixedNumber, false),
-          high: formatNumber(highValue, fixedNumber, false),
-          low: formatNumber(lowValue, fixedNumber, false),
-          updown: formatNumber(updownValue, fixedNumber, false),
-          updownValue,
-          percent: `${sign}${formatNumber(percentValue, 2, false)}`,
-          amount: formatNumber(Number(params[9] || 0), 2),
-          time: [params[30], params[31]].filter(Boolean).join(' '),
-        });
+        if (!params[0]) return;
+        const indexInfo = this.parseStatusBarIndexInfo(code, params);
+        if (indexInfo) {
+          indexMap.set(code, indexInfo);
+        }
       });
 
     return DEFAULT_STATUS_BAR_INDEX_CODES.map((code) => indexMap.get(code)).filter(
       (item): item is StatusBarIndexInfo => Boolean(item)
     );
+  }
+
+  private parseStatusBarIndexInfo(
+    code: string,
+    params: string[]
+  ): StatusBarIndexInfo | null {
+    if (code.startsWith('int_')) {
+      return this.parseSimpleGlobalIndexInfo(code, params);
+    }
+    if (code.startsWith('b_')) {
+      return this.parseDetailedGlobalIndexInfo(code, params);
+    }
+    return this.parseCnIndexInfo(code, params);
+  }
+
+  private parseCnIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
+    if (params.length <= 5) {
+      return null;
+    }
+    const open = params[1] || '0';
+    const yestclose = params[2] || '0';
+    const price = params[3] || '0';
+    const high = params[4] || '0';
+    const low = params[5] || '0';
+    const amount = params[9] || '0';
+    const time = [params[30], params[31]].filter(Boolean).join(' ');
+    return this.buildStatusBarIndexInfo(code, params[0], open, yestclose, price, high, low, amount, time);
+  }
+
+  private parseSimpleGlobalIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
+    if (params.length <= 3) {
+      return null;
+    }
+    const price = params[1] || '0';
+    const updown = params[2] || '0';
+    const yestclose = String(Number(price) - Number(updown));
+    return this.buildStatusBarIndexInfo(code, params[0], price, yestclose, price, price, price, '0', '');
+  }
+
+  private parseDetailedGlobalIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
+    if (params.length <= 11) {
+      return null;
+    }
+    const price = params[1] || '0';
+    const updown = params[2] || '0';
+    const yestclose = String(Number(price) - Number(updown));
+    const open = params[8] || price;
+    const high = params[10] || price;
+    const low = params[11] || price;
+    const amount = params[12] || '0';
+    const time = [params[6], params[7] || params[5]].filter(Boolean).join(' ');
+    return this.buildStatusBarIndexInfo(code, params[0], open, yestclose, price, high, low, amount, time);
+  }
+
+  private buildStatusBarIndexInfo(
+    code: string,
+    name: string,
+    open: string,
+    yestclose: string,
+    price: string,
+    high: string,
+    low: string,
+    amount: string,
+    time: string
+  ): StatusBarIndexInfo | null {
+    const openValue = Number(open);
+    const priceValue = Number(price);
+    const yestcloseValue = Number(yestclose);
+    const highValue = Number(high);
+    const lowValue = Number(low);
+    if (!name || !Number.isFinite(priceValue)) {
+      return null;
+    }
+
+    const fixedNumber = calcFixedPriceNumber(open, yestclose, price, high, low);
+    const updownValue = priceValue - yestcloseValue;
+    const percentValue = yestcloseValue
+      ? (Math.abs(updownValue) / yestcloseValue) * 100
+      : 0;
+    const sign = updownValue >= 0 ? '+' : '-';
+
+    return {
+      code,
+      name,
+      open: formatNumber(openValue, fixedNumber, false),
+      yestclose: formatNumber(yestcloseValue, fixedNumber, false),
+      price: formatNumber(priceValue, fixedNumber, false),
+      high: formatNumber(highValue, fixedNumber, false),
+      low: formatNumber(lowValue, fixedNumber, false),
+      updown: formatNumber(updownValue, fixedNumber, false),
+      updownValue,
+      percent: `${sign}${formatNumber(percentValue, 2, false)}`,
+      amount: formatNumber(Number(amount || 0), 2),
+      time,
+    };
   }
 
   private ensureIndexBarItem(code: string, priority: number): StatusBarItem {

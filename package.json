@@ -64,6 +64,31 @@
         "icon": "$(new-folder)"
       },
       {
+        "command": "leek-fund.moveStockGroupUp",
+        "title": "分组上移",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "leek-fund.moveStockGroupDown",
+        "title": "分组下移",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "leek-fund.moveStockGroupTop",
+        "title": "分组置顶",
+        "icon": "$(arrow-small-up)"
+      },
+      {
+        "command": "leek-fund.moveStockGroupBottom",
+        "title": "分组置底",
+        "icon": "$(arrow-small-down)"
+      },
+      {
+        "command": "leek-fund.deleteStockGroup",
+        "title": "删除分组",
+        "icon": "$(trash)"
+      },
+      {
         "command": "leek-fund.refreshStock",
         "title": "刷新数据",
         "icon": "$(refresh)"
@@ -89,6 +114,16 @@
         "command": "leek-fund.hideStockFromStatusBar",
         "title": "取消状态栏轮播展示",
         "icon": "$(eye)"
+      },
+      {
+        "command": "leek-fund.toggleHoldingStock",
+        "title": "切换持仓状态",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "leek-fund.selectStockGroup",
+        "title": "选择分组",
+        "icon": "$(symbol-folder)"
       },
       {
         "command": "leek-fund.setStockStatusBar",
@@ -172,9 +207,44 @@
           "group": "group1"
         },
         {
+          "command": "leek-fund.selectStockGroup",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
+          "group": "group1"
+        },
+        {
           "command": "leek-fund.setStockTop",
           "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
           "group": "inline"
+        },
+        {
+          "command": "leek-fund.toggleHoldingStock",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
+          "group": "inline"
+        },
+        {
+          "command": "leek-fund.moveStockGroupUp",
+          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "group": "group2"
+        },
+        {
+          "command": "leek-fund.moveStockGroupDown",
+          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "group": "group2"
+        },
+        {
+          "command": "leek-fund.moveStockGroupTop",
+          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "group": "group2"
+        },
+        {
+          "command": "leek-fund.moveStockGroupBottom",
+          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "group": "group2"
+        },
+        {
+          "command": "leek-fund.deleteStockGroup",
+          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "group": "group3"
         },
         {
           "command": "leek-fund.deleteStock",
@@ -213,7 +283,7 @@
         "leek-fund.stockGroups": {
           "type": "array",
           "default": [],
-          "description": "股票树自定义分组配置。建议通过界面创建和拖动调整。"
+          "description": "股票树自定义分组配置。建议通过界面创建和右键菜单调整。"
         },
         "leek-fund.stocksRemind": {
           "type": "object",

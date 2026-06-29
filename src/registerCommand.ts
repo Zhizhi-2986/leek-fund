@@ -22,6 +22,7 @@ import StockService from './explorer/stockService';
 import globalState from './globalState';
 import { LeekFundConfig } from './shared/leekConfig';
 import { LeekTreeItem } from './shared/leekTreeItem';
+import { isStockTreeHolding, setStockTreeHolding } from './shared/stockHoldingState';
 import { StockCategory } from './shared/typed';
 import { colorOptionList, randomColor } from './shared/utils';
 
@@ -78,6 +79,16 @@ async function pickStockGroupCategory(
   return categoryItem?.description as StockCategory.A | StockCategory.HK | StockCategory.US | undefined;
 }
 
+type StockGroupMoveDirection = 'up' | 'down' | 'top' | 'bottom';
+
+function getTargetStockGroupId(target: LeekTreeItem | undefined): string | undefined {
+  if (!target?.isStockGroup || target.contextValue !== 'stockGroup' || !target.stockGroupId) {
+    window.showWarningMessage('请从自定义分组上调整分组顺序。');
+    return undefined;
+  }
+  return target.stockGroupId;
+}
+
 export function registerViewEvent(
   context: ExtensionContext,
   stockService: StockService,
@@ -113,6 +124,20 @@ export function registerViewEvent(
       const code = getTargetStockCode(target);
       if (!code) return;
       LeekFundConfig.setStatusBarStockVisibleCfg(code, false);
+    })
+  );
+  context.subscriptions.push(
+    commands.registerCommand('leek-fund.toggleHoldingStock', async (target) => {
+      const code = getTargetStockCode(target);
+      if (!code) return;
+      const nextHolding = !isStockTreeHolding(code);
+      try {
+        await setStockTreeHolding(code, nextHolding);
+        window.showInformationMessage(nextHolding ? '已标记为持仓股。' : '已取消持仓标记。');
+        stockProvider.refresh();
+      } catch (err) {
+        window.showWarningMessage(err instanceof Error ? err.message : '持仓状态更新失败。');
+      }
     })
   );
   context.subscriptions.push(
@@ -174,6 +199,85 @@ export function registerViewEvent(
       });
       if (!name) return;
       LeekFundConfig.createStockGroup(name, category, () => {
+        stockProvider.refresh();
+      });
+    })
+  );
+  context.subscriptions.push(
+    commands.registerCommand('leek-fund.selectStockGroup', async (target?: LeekTreeItem) => {
+      const code = getTargetStockCode(target);
+      if (!code) return;
+      const category = getStockCategoryFromTarget(target);
+      if (!category) {
+        window.showWarningMessage('仅支持 A 股、港股、美股选择分组。');
+        return;
+      }
+
+      const groups = LeekFundConfig.getStockGroups().filter((group) => group.category === category);
+      if (!groups.length) {
+        window.showWarningMessage('当前市场暂无自定义分组，请先创建分组。');
+        return;
+      }
+
+      const currentGroup = groups.find((group) => group.stockCodes.includes(code));
+      const selected = await window.showQuickPick(
+        [
+          {
+            label: '未分组',
+            description: currentGroup ? '移出自定义分组' : '当前分组',
+            stockGroupId: undefined as string | undefined,
+          },
+          ...groups.map((group) => ({
+            label: group.name,
+            description: group.id === currentGroup?.id ? '当前分组' : `${group.stockCodes.length}只`,
+            stockGroupId: group.id as string | undefined,
+          })),
+        ],
+        {
+          placeHolder: '选择股票所属分组',
+        }
+      );
+      if (!selected) return;
+
+      LeekFundConfig.setStockGroupForStock(code, selected.stockGroupId, () => {
+        stockProvider.refresh();
+      });
+    })
+  );
+  const registerStockGroupMoveCommand = (
+    command: string,
+    direction: StockGroupMoveDirection
+  ) => {
+    context.subscriptions.push(
+      commands.registerCommand(command, (target?: LeekTreeItem) => {
+        const groupId = getTargetStockGroupId(target);
+        if (!groupId) return;
+        LeekFundConfig.moveStockGroup(groupId, direction, () => {
+          stockProvider.refresh();
+        });
+      })
+    );
+  };
+  registerStockGroupMoveCommand('leek-fund.moveStockGroupUp', 'up');
+  registerStockGroupMoveCommand('leek-fund.moveStockGroupDown', 'down');
+  registerStockGroupMoveCommand('leek-fund.moveStockGroupTop', 'top');
+  registerStockGroupMoveCommand('leek-fund.moveStockGroupBottom', 'bottom');
+  context.subscriptions.push(
+    commands.registerCommand('leek-fund.deleteStockGroup', async (target?: LeekTreeItem) => {
+      const groupId = getTargetStockGroupId(target);
+      if (!groupId) return;
+      const group = LeekFundConfig.getStockGroups().find((item) => item.id === groupId);
+      if (!group) {
+        window.showWarningMessage('未找到股票分组。');
+        return;
+      }
+      const confirm = await window.showWarningMessage(
+        `确认删除分组「${group.name}」？组内股票不会删除。`,
+        { modal: true },
+        '删除'
+      );
+      if (confirm !== '删除') return;
+      LeekFundConfig.deleteStockGroup(groupId, () => {
         stockProvider.refresh();
       });
     })
