@@ -7,6 +7,7 @@ export interface MinutePoint {
   time: string;
   price: number;
   volume: number;
+  percentChange?: number; // 涨跌幅百分比
 }
 
 export interface TradeDetail {
@@ -60,50 +61,69 @@ export async function getAStockDetailData(code: string): Promise<StockDetailData
 
 export async function getAStockMinuteLine(code: string, count = 240): Promise<MinutePoint[]> {
   const normalizedCode = normalizeAStockCode(code);
-  const url = 'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData';
+  // 转换代码格式：sh600519 -> 1.600519
+  const marketCode = normalizedCode.startsWith('sh')
+    ? `1.${normalizedCode.slice(2)}`
+    : `0.${normalizedCode.slice(2)}`;
+  const url = 'http://push2his.eastmoney.com/api/qt/stock/kline/get';
   const resp = await Axios.get(url, {
     params: {
-      symbol: normalizedCode,
-      scale: 1,
-      ma: 'no',
-      datalen: count,
+      secid: marketCode,
+      fields1: 'f1,f2,f3,f4,f5,f6',
+      fields2: 'f51,f52,f53,f54,f55,f56,f57,f58',
+      klt: 1, // 1分钟K线
+      fqt: 1,
+      beg: 0,
+      end: 20500101,
+      smplmt: count,
+      lmt: 1000000,
     },
     headers: {
       ...randHeader(),
-      Referer: 'https://finance.sina.com.cn/',
+      Referer: 'http://quote.eastmoney.com/',
     },
   });
 
-  if (!Array.isArray(resp.data)) {
+  if (!resp.data?.data?.klines || !Array.isArray(resp.data.data.klines)) {
     return [];
   }
 
-  const rawPoints = resp.data
-    .map((item: any) => {
-      const rawDate = String(item.day || item.date || item.time || '');
-      const datePart = rawDate.slice(0, 10);
-      const timePart = rawDate.length >= 16 ? rawDate.slice(11, 16) : rawDate.slice(-5);
+  const klines = resp.data.data.klines;
+  if (!klines.length) {
+    return [];
+  }
+
+  // 获取昨收价 - 从 API 响应中解析
+  // 响应结构: { data: { qfq: { prevclose: number }, klines: [...] } } 或其他格式
+  const dataObj = resp.data?.data || resp.data || {};
+  const prevClose = dataObj.qfq?.prevclose || dataObj.data?.qfq?.prevclose || 0;
+
+  // 解析东方财富API返回的分钟数据
+  // 格式: "2026-06-29 09:31,开盘,收盘,最高,最低,成交量,成交额,涨跌额"
+  const rawPoints = klines
+    .map((item: string) => {
+      const parts = item.split(',');
+      if (parts.length < 6) return null;
+      const dateTimePart = parts[0]; // "2026-06-29 09:31"
+      const timePart = dateTimePart.split(' ')[1] || ''; // "09:31"
+      const price = parseFloat(parts[2]) || 0; // 收盘价
+      // 计算涨跌幅百分比 (parts[7] 是涨跌额，parts[2] 是当前价格)
+      const changeAmount = parseFloat(parts[7]) || 0;
+      const percentChange = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
       return {
-        date: datePart,
         time: timePart,
-        price: parseFloat(item.close || item.price || '0') || 0,
-        volume: parseFloat(item.volume || '0') || 0,
+        price,
+        volume: parseInt(parts[5]) || 0, // 成交量
+        percentChange,
       };
     })
-    .filter((item: any) => item.time && item.price > 0);
+    .filter((item: any) => item && item.time && item.price > 0);
 
   if (!rawPoints.length) {
     return [];
   }
 
-  const latestDate = rawPoints[rawPoints.length - 1].date;
-  return rawPoints
-    .filter((item: any) => item.date === latestDate)
-    .map((item: any) => ({
-      time: item.time,
-      price: item.price,
-      volume: item.volume,
-    }));
+  return rawPoints;
 }
 
 export async function getAStockQuoteDetail(code: string): Promise<{
@@ -169,10 +189,10 @@ function buildTradeDetails(minuteLine: MinutePoint[]): TradeDetail[] {
       const direction: TradeDetail['direction'] = !prev
         ? 'flat'
         : point.price > prev.price
-          ? 'up'
-          : point.price < prev.price
-            ? 'down'
-            : 'flat';
+        ? 'up'
+        : point.price < prev.price
+        ? 'down'
+        : 'flat';
       return {
         time: point.time,
         price: point.price,
@@ -193,7 +213,9 @@ function buildOrderBookLevel(level: number, price: string, volume: string): Orde
 }
 
 function normalizeAStockCode(code: string): string {
-  const normalized = String(code || '').trim().toLowerCase();
+  const normalized = String(code || '')
+    .trim()
+    .toLowerCase();
   if (!/^(sh|sz|bj)\d{6}$/.test(normalized)) {
     throw new Error(`仅支持 A 股股票详情：${code}`);
   }

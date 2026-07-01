@@ -42,11 +42,17 @@ function getTargetStockCode(target: LeekTreeItem | undefined): string | undefine
   return code;
 }
 
-function isMarketStockCategory(category: StockCategory | undefined): category is StockCategory.A | StockCategory.HK | StockCategory.US {
-  return category === StockCategory.A || category === StockCategory.HK || category === StockCategory.US;
+function isMarketStockCategory(
+  category: StockCategory | undefined
+): category is StockCategory.A | StockCategory.HK | StockCategory.US {
+  return (
+    category === StockCategory.A || category === StockCategory.HK || category === StockCategory.US
+  );
 }
 
-function getStockCategoryFromTarget(target: LeekTreeItem | undefined): StockCategory.A | StockCategory.HK | StockCategory.US | undefined {
+function getStockCategoryFromTarget(
+  target: LeekTreeItem | undefined
+): StockCategory.A | StockCategory.HK | StockCategory.US | undefined {
   if (!target) return undefined;
   if (target.isStockGroup && isMarketStockCategory(target.stockGroupCategory)) {
     return target.stockGroupCategory;
@@ -76,7 +82,11 @@ async function pickStockGroupCategory(
       placeHolder: '选择分组所属市场',
     }
   );
-  return categoryItem?.description as StockCategory.A | StockCategory.HK | StockCategory.US | undefined;
+  return categoryItem?.description as
+    | StockCategory.A
+    | StockCategory.HK
+    | StockCategory.US
+    | undefined;
 }
 
 type StockGroupMoveDirection = 'up' | 'down' | 'top' | 'bottom';
@@ -229,7 +239,8 @@ export function registerViewEvent(
           },
           ...groups.map((group) => ({
             label: group.name,
-            description: group.id === currentGroup?.id ? '当前分组' : `${group.stockCodes.length}只`,
+            description:
+              group.id === currentGroup?.id ? '当前分组' : `${group.stockCodes.length}只`,
             stockGroupId: group.id as string | undefined,
           })),
         ],
@@ -244,10 +255,7 @@ export function registerViewEvent(
       });
     })
   );
-  const registerStockGroupMoveCommand = (
-    command: string,
-    direction: StockGroupMoveDirection
-  ) => {
+  const registerStockGroupMoveCommand = (command: string, direction: StockGroupMoveDirection) => {
     context.subscriptions.push(
       commands.registerCommand(command, (target?: LeekTreeItem) => {
         const groupId = getTargetStockGroupId(target);
@@ -278,6 +286,39 @@ export function registerViewEvent(
       );
       if (confirm !== '删除') return;
       LeekFundConfig.deleteStockGroup(groupId, () => {
+        stockProvider.refresh();
+      });
+    })
+  );
+  context.subscriptions.push(
+    commands.registerCommand('leek-fund.renameStockGroup', async (target?: LeekTreeItem) => {
+      const groupId = getTargetStockGroupId(target);
+      if (!groupId) return;
+      const groups = LeekFundConfig.getStockGroups();
+      const group = groups.find((item) => item.id === groupId);
+      if (!group) {
+        window.showWarningMessage('未找到股票分组。');
+        return;
+      }
+      const newName = await window.showInputBox({
+        prompt: '输入新的分组名称',
+        value: group.name,
+        validateInput: (value) => {
+          const trimmed = value.trim();
+          if (!trimmed) return '分组名称不能为空';
+          if (
+            groups.some(
+              (item) =>
+                item.category === group.category && item.name === trimmed && item.id !== groupId
+            )
+          ) {
+            return '同一市场分类下分组名称不能重复';
+          }
+          return undefined;
+        },
+      });
+      if (!newName) return;
+      LeekFundConfig.renameStockGroup(groupId, newName, () => {
         stockProvider.refresh();
       });
     })

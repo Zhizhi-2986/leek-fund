@@ -47,6 +47,17 @@ export default class StockService extends LeekService {
       }
     });
 
+    // 获取 ETF 数据
+    const etfCodes = LeekFundConfig.getEtfStocks();
+    let etfStockList: Array<LeekTreeItem> = [];
+    if (etfCodes.length > 0) {
+      try {
+        etfStockList = await this.getEtfData(etfCodes);
+      } catch (err) {
+        console.error('ETF data fetch failed:', err);
+      }
+    }
+
     let stockList: Array<LeekTreeItem> = [];
     globalState.noDataStockCount = 0; // 重置无数据股票计数
     const result = await Promise.allSettled([
@@ -58,6 +69,12 @@ export default class StockService extends LeekService {
         stockList = stockList.concat(item.value);
       }
     });
+
+    // 合并 ETF 数据
+    if (etfStockList.length > 0) {
+      stockList = stockList.concat(etfStockList);
+      globalState.etfStockCount = etfStockList.length;
+    }
 
     const res = sortData(stockList, order);
     executeStocksRemind(res, this.stockList);
@@ -443,6 +460,114 @@ export default class StockService extends LeekService {
 
   private getStockContextValue(code: string, statusBarStocks: string[]): string {
     return statusBarStocks.includes(code) ? 'statusBarStockVisible' : 'statusBarStockHidden';
+  }
+
+  /**
+   * 获取 ETF 数据
+   */
+  async getEtfData(codes: Array<string>): Promise<Array<LeekTreeItem>> {
+    if ((codes && codes.length === 0) || !codes) {
+      return [];
+    }
+
+    const stockList: Array<LeekTreeItem> = [];
+    const url = `https://hq.sinajs.cn/list=${codes
+      .map((code) => code.replace('.', '$'))
+      .join(',')}`;
+
+    try {
+      const resp = await Axios.get(url, {
+        responseType: 'arraybuffer',
+        transformResponse: [
+          (data) => {
+            const body = decode(data, 'GB18030');
+            return body;
+          },
+        ],
+        headers: {
+          ...randHeader(),
+          Referer: 'http://finance.sina.com.cn/',
+        },
+      });
+
+      if (/FAILED/.test(resp.data)) {
+        console.warn('Some ETF codes are not supported');
+        return [];
+      }
+
+      const splitData = resp.data.split('";\n');
+      for (let i = 0; i < splitData.length - 1; i++) {
+        let code = splitData[i].split('="')[0].split('var hq_str_')[1];
+        if (code.includes('$')) {
+          code = code.replace('$', '.');
+        }
+        const params = splitData[i].split('="')[1].split(',');
+
+        if (params.length < 10) {
+          continue;
+        }
+
+        // ETF 解析逻辑与 A 股类似
+        const name = params[0];
+        const open = params[1];
+        const yestclose = params[2];
+        let price = params[3];
+
+        if (Number(price) === 0) {
+          const buy1 = params[6];
+          if (Number(buy1) !== 0) {
+            price = buy1;
+          } else {
+            price = yestclose;
+          }
+        }
+
+        const high = params[4];
+        const low = params[5];
+        const fixedNumber = calcFixedPriceNumber(open, yestclose, price, high, low);
+
+        const openNum = Number(open);
+        const yestcloseNum = Number(yestclose);
+        const priceNum = Number(price);
+
+        if (openNum <= 0 && priceNum <= 0) {
+          continue;
+        }
+
+        const updownNum = priceNum - yestcloseNum;
+        const updown = formatNumber(updownNum, fixedNumber, false);
+        const percent =
+          (updownNum >= 0 ? '+' : '-') +
+          formatNumber((Math.abs(updownNum) / yestcloseNum) * 100, 2, false);
+
+        const stockItem: any = {
+          code,
+          name,
+          open: formatNumber(open, fixedNumber, false),
+          yestclose: formatNumber(yestclose, fixedNumber, false),
+          price: formatNumber(price, fixedNumber, false),
+          low: formatNumber(low, fixedNumber, false),
+          high: formatNumber(high, fixedNumber, false),
+          volume: formatNumber(params[8], 2),
+          amount: formatNumber(params[9], 2),
+          time: `${params[30]} ${params[31]}`,
+          percent,
+          contextValue: 'statusBarStockHidden',
+          showLabel: this.showLabel,
+          isStock: true,
+          type: code.substr(0, 2),
+          symbol: code.substr(2),
+          updown,
+        };
+
+        const treeItem = new LeekTreeItem(stockItem, this.context);
+        stockList.push(treeItem);
+      }
+    } catch (err) {
+      console.error('ETF data fetch error:', err);
+    }
+
+    return stockList;
   }
 
   // https://github.com/LeekHub/leek-fund/issues/266

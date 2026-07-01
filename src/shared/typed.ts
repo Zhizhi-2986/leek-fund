@@ -115,6 +115,7 @@ export enum StockCategory {
   A = 'A Stock',
   US = 'US Stock',
   HK = 'HK Stock',
+  ETF = 'ETF',
   NODATA = 'Not Support Stock',
 }
 

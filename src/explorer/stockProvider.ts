@@ -67,6 +67,8 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
       ) {
         case StockCategory.A:
           return this.getMarketNodes(resultPromise, StockCategory.A);
+        case StockCategory.ETF:
+          return this.getEtfNodes(resultPromise);
         case StockCategory.HK:
           return this.getMarketNodes(resultPromise, StockCategory.HK);
         case StockCategory.US:
@@ -206,6 +208,16 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
       ),
       new LeekTreeItem(
         Object.assign({ contextValue: 'category' }, defaultMarketInfo, {
+          id: StockCategory.ETF,
+          name: `${StockCategory.ETF}${
+            globalState.etfStockCount > 0 ? `(${globalState.etfStockCount})` : ''
+          }`,
+        }),
+        undefined,
+        true
+      ),
+      new LeekTreeItem(
+        Object.assign({ contextValue: 'category' }, defaultMarketInfo, {
           id: StockCategory.HK,
           name: `${StockCategory.HK}${
             globalState.hkStockCount > 0 ? `(${globalState.hkStockCount})` : ''
@@ -272,6 +284,19 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
         return /^(nodata)/.test(item.type || '');
       });
     });
+  }
+
+  getEtfNodes(stocks: Promise<LeekTreeItem[]>): Promise<LeekTreeItem[]> {
+    return stocks.then((res: LeekTreeItem[]) => {
+      return res.filter((item: LeekTreeItem) => {
+        return this.isEtfCode(item.info.code);
+      });
+    });
+  }
+
+  private isEtfCode(code: string): boolean {
+    // ETF: sh5xxxxx, sz1xxxxxx, sz5xxxxxx
+    return /^(sh5|sz1|sz5)/.test(code);
   }
 
   private createStockGroupNode(group: StockGroupConfig): LeekTreeItem {

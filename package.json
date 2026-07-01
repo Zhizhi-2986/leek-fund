@@ -89,6 +89,11 @@
         "icon": "$(trash)"
       },
       {
+        "command": "leek-fund.renameStockGroup",
+        "title": "重命名分组",
+        "icon": "$(pencil)"
+      },
+      {
         "command": "leek-fund.refreshStock",
         "title": "刷新数据",
         "icon": "$(refresh)"
@@ -243,6 +248,11 @@
         },
         {
           "command": "leek-fund.deleteStockGroup",
+          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "group": "group3"
+        },
+        {
+          "command": "leek-fund.renameStockGroup",
           "when": "view == leekFundView.stock && viewItem == stockGroup",
           "group": "group3"
         },

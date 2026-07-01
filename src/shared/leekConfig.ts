@@ -89,11 +89,7 @@ export class LeekFundConfig extends BaseConfig {
     );
   }
 
-  static createStockGroup(
-    name: string,
-    category: StockGroupConfig['category'],
-    cb?: Function
-  ) {
+  static createStockGroup(name: string, category: StockGroupConfig['category'], cb?: Function) {
     const trimmedName = name.trim();
     const groups = this.getStockGroups();
     const exists = groups.some(
@@ -120,11 +116,7 @@ export class LeekFundConfig extends BaseConfig {
     });
   }
 
-  static moveStockGroup(
-    groupId: string,
-    direction: StockGroupMoveDirection,
-    cb?: Function
-  ) {
+  static moveStockGroup(groupId: string, direction: StockGroupMoveDirection, cb?: Function) {
     const groups = this.getStockGroups();
     const group = groups.find((item) => item.id === groupId);
     if (!group) {
@@ -191,6 +183,47 @@ export class LeekFundConfig extends BaseConfig {
     });
   }
 
+  static renameStockGroup(groupId: string, newName: string, cb?: Function) {
+    const trimmedName = newName.trim();
+    if (!trimmedName) {
+      window.showWarningMessage(`分组名称不能为空。`);
+      return Promise.resolve(this.getStockGroups());
+    }
+
+    const groups = this.getStockGroups();
+    const group = groups.find((item) => item.id === groupId);
+    if (!group) {
+      window.showWarningMessage(`未找到股票分组。`);
+      return Promise.resolve(groups);
+    }
+
+    // 检查同类别下是否有重名
+    const nameExists = groups.some(
+      (item) => item.category === group.category && item.name === trimmedName && item.id !== groupId
+    );
+    if (nameExists) {
+      window.showWarningMessage(`同一市场分类下分组名称「${trimmedName}」已存在。`);
+      return Promise.resolve(groups);
+    }
+
+    if (group.name === trimmedName) {
+      window.showInformationMessage(`分组名称未变化。`);
+      return Promise.resolve(groups);
+    }
+
+    const nextGroups = groups.map((item) =>
+      item.id === groupId ? { ...item, name: trimmedName } : item
+    );
+
+    return this.setStockGroups(nextGroups).then(() => {
+      window.showInformationMessage(`分组「${trimmedName}」已保存。`);
+      if (cb && typeof cb === 'function') {
+        cb(group, nextGroups);
+      }
+      return nextGroups;
+    });
+  }
+
   static setStockGroupForStock(code: string, groupId: string | undefined, cb?: Function) {
     const groups = this.getStockGroups();
     const targetGroup = groupId ? groups.find((item) => item.id === groupId) : undefined;
@@ -250,6 +283,43 @@ export class LeekFundConfig extends BaseConfig {
     });
   }
 
+  // ETF Begin
+  static getEtfStocks(): string[] {
+    return this.getConfig('leek-fund.etfStocks', []);
+  }
+
+  static updateEtfStockCfg(list: string, cb?: Function) {
+    const cfgKey = 'leek-fund.etfStocks';
+    const config = this.getGlobalConfig();
+    const origin = this.getGlobalConfigArray(cfgKey);
+    let codes = typeof list === 'string' ? list.split(',') : list;
+    let newCodes = uniq(compact(flattenDeep(origin).concat(codes))) as string[];
+    config.update(cfgKey, newCodes, true).then(() => {
+      window.showInformationMessage(`ETF Successfully add.`);
+      if (cb && typeof cb === 'function') {
+        cb(codes, newCodes);
+      }
+    });
+  }
+
+  static removeEtfStockCfg(code: string, cb?: Function) {
+    const cfgKey = 'leek-fund.etfStocks';
+    const config = this.getGlobalConfig();
+    const sourceCfg = this.getGlobalConfigArray(cfgKey);
+    const newCfg = sourceCfg.filter((item: string) => item !== code);
+    if (sourceCfg.length === newCfg.length) {
+      window.showInformationMessage(`未找到要删除的 ETF：${code}`);
+    } else {
+      window.showInformationMessage(`ETF Successfully delete.`);
+    }
+    config.update(cfgKey, newCfg, true).then(() => {
+      if (cb && typeof cb === 'function') {
+        cb(code);
+      }
+    });
+  }
+  // ETF End
+
   static removeStockCfg(code: string, cb?: Function) {
     this.removeConfig('leek-fund.stocks', code).then(() => {
       this.removeStockFromGroups(code).then(() => {
@@ -269,7 +339,9 @@ export class LeekFundConfig extends BaseConfig {
         : configArr.filter((item) => item !== code);
       const updateStatusBarStock = () =>
         this.setConfig('leek-fund.statusBarStock', nextConfig).then(() => {
-          window.showInformationMessage(visible ? `已加入状态栏轮播展示。` : `已取消状态栏轮播展示。`);
+          window.showInformationMessage(
+            visible ? `已加入状态栏轮播展示。` : `已取消状态栏轮播展示。`
+          );
           if (cb && typeof cb === 'function') {
             cb(code, nextConfig);
           }
@@ -415,5 +487,4 @@ export class LeekFundConfig extends BaseConfig {
     }
   }
   // StatusBar End
-
 }

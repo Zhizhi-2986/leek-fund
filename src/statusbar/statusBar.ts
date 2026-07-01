@@ -16,7 +16,7 @@ import {
 
 const STOCK_STATUS_BAR_PRIORITY = 4;
 const INDEX_STATUS_BAR_START_PRIORITY = 3;
-const DEFAULT_STATUS_BAR_INDEX_CODES = ['sh000001', 'sz399006', 'sh000680', 'int_nikkei', 'b_KOSPI'];
+const DEFAULT_STATUS_BAR_INDEX_CODES = ['sh000001', 'sz399006', 'sh000680', 'b_NKY', 'b_KOSPI'];
 
 type StatusBarIndexInfo = {
   code: string;
@@ -197,12 +197,10 @@ export class StatusBar {
     } = item.info;
     const deLow = percent.indexOf('-') === -1;
     // Respect hideStatusBarIcon config
-    const icon = this.hideStatusBarIcon ? '' : (deLow ? '📈' : '📉');
+    const icon = this.hideStatusBarIcon ? '' : deLow ? '📈' : '📉';
 
     // 格式化 updown 加上符号
-    const updownFormatted = updown
-      ? `${updown.startsWith('-') ? '' : '+'}${updown}`
-      : '';
+    const updownFormatted = updown ? `${updown.startsWith('-') ? '' : '+'}${updown}` : '';
 
     stockBarItem.text = formatLabelString(this.statusBarItemLabelFormat, {
       ...item.info,
@@ -304,10 +302,7 @@ export class StatusBar {
     );
   }
 
-  private parseStatusBarIndexInfo(
-    code: string,
-    params: string[]
-  ): StatusBarIndexInfo | null {
+  private parseStatusBarIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
     if (code.startsWith('int_')) {
       return this.parseSimpleGlobalIndexInfo(code, params);
     }
@@ -328,7 +323,17 @@ export class StatusBar {
     const low = params[5] || '0';
     const amount = params[9] || '0';
     const time = [params[30], params[31]].filter(Boolean).join(' ');
-    return this.buildStatusBarIndexInfo(code, params[0], open, yestclose, price, high, low, amount, time);
+    return this.buildStatusBarIndexInfo(
+      code,
+      params[0],
+      open,
+      yestclose,
+      price,
+      high,
+      low,
+      amount,
+      time
+    );
   }
 
   private parseSimpleGlobalIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
@@ -338,7 +343,17 @@ export class StatusBar {
     const price = params[1] || '0';
     const updown = params[2] || '0';
     const yestclose = String(Number(price) - Number(updown));
-    return this.buildStatusBarIndexInfo(code, params[0], price, yestclose, price, price, price, '0', '');
+    return this.buildStatusBarIndexInfo(
+      code,
+      params[0],
+      price,
+      yestclose,
+      price,
+      price,
+      price,
+      '0',
+      ''
+    );
   }
 
   private parseDetailedGlobalIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
@@ -353,7 +368,17 @@ export class StatusBar {
     const low = params[11] || price;
     const amount = params[12] || '0';
     const time = [params[6], params[7] || params[5]].filter(Boolean).join(' ');
-    return this.buildStatusBarIndexInfo(code, params[0], open, yestclose, price, high, low, amount, time);
+    return this.buildStatusBarIndexInfo(
+      code,
+      params[0],
+      open,
+      yestclose,
+      price,
+      high,
+      low,
+      amount,
+      time
+    );
   }
 
   private buildStatusBarIndexInfo(
@@ -378,9 +403,7 @@ export class StatusBar {
 
     const fixedNumber = calcFixedPriceNumber(open, yestclose, price, high, low);
     const updownValue = priceValue - yestcloseValue;
-    const percentValue = yestcloseValue
-      ? (Math.abs(updownValue) / yestcloseValue) * 100
-      : 0;
+    const percentValue = yestcloseValue ? (Math.abs(updownValue) / yestcloseValue) * 100 : 0;
     const sign = updownValue >= 0 ? '+' : '-';
 
     return {
@@ -402,10 +425,7 @@ export class StatusBar {
   private ensureIndexBarItem(code: string, priority: number): StatusBarItem {
     let indexBarItem = this.indexBarItems.get(code);
     if (!indexBarItem) {
-      indexBarItem = window.createStatusBarItem(
-        StatusBarAlignment.Left,
-        priority
-      );
+      indexBarItem = window.createStatusBarItem(StatusBarAlignment.Left, priority);
       this.indexBarItems.set(code, indexBarItem);
     }
     return indexBarItem;
