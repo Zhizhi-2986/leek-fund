@@ -72,9 +72,17 @@ export class LeekFundConfig extends BaseConfig {
       return [];
     }
 
-    return groups
+    const normalizedGroups = groups
       .map((group: any) => this.normalizeStockGroup(group))
       .filter((group: StockGroupConfig | undefined): group is StockGroupConfig => Boolean(group));
+    const topLevelGroups = new Map(
+      normalizedGroups.filter((group) => !group.parentId).map((group) => [group.id, group])
+    );
+    return normalizedGroups.filter((group) => {
+      if (!group.parentId) return true;
+      const parent = topLevelGroups.get(group.parentId);
+      return Boolean(parent && parent.category === group.category);
+    });
   }
 
   static setStockGroups(groups: StockGroupConfig[]) {
@@ -85,15 +93,29 @@ export class LeekFundConfig extends BaseConfig {
         name: group.name,
         category: group.category,
         stockCodes: uniq(group.stockCodes || []),
+        ...(group.parentId ? { parentId: group.parentId } : {}),
       }))
     );
   }
 
-  static createStockGroup(name: string, category: StockGroupConfig['category'], cb?: Function) {
+  static createStockGroup(
+    name: string,
+    category: StockGroupConfig['category'],
+    cb?: Function,
+    parentId?: string
+  ) {
     const trimmedName = name.trim();
     const groups = this.getStockGroups();
+    const parentGroup = parentId ? groups.find((group) => group.id === parentId) : undefined;
+    if (parentId && (!parentGroup || parentGroup.parentId || parentGroup.category !== category)) {
+      window.showWarningMessage(`二级分组只能创建在同一市场的一级分组下。`);
+      return Promise.resolve(groups);
+    }
     const exists = groups.some(
-      (group) => group.category === category && group.name === trimmedName
+      (group) =>
+        group.category === category &&
+        group.parentId === parentId &&
+        group.name === trimmedName
     );
     if (exists) {
       window.showWarningMessage(`分组「${trimmedName}」已存在。`);
@@ -105,6 +127,7 @@ export class LeekFundConfig extends BaseConfig {
       name: trimmedName,
       category,
       stockCodes: [],
+      ...(parentId ? { parentId } : {}),
     };
     const nextGroups = [...groups, group];
     return this.setStockGroups(nextGroups).then(() => {
@@ -124,17 +147,19 @@ export class LeekFundConfig extends BaseConfig {
       return Promise.resolve(groups);
     }
 
-    const categoryGroups = groups.filter((item) => item.category === group.category);
-    const currentIndex = categoryGroups.findIndex((item) => item.id === groupId);
+    const siblingGroups = groups.filter(
+      (item) => item.category === group.category && item.parentId === group.parentId
+    );
+    const currentIndex = siblingGroups.findIndex((item) => item.id === groupId);
     let nextIndex = currentIndex;
     if (direction === 'up') {
       nextIndex = Math.max(0, currentIndex - 1);
     } else if (direction === 'down') {
-      nextIndex = Math.min(categoryGroups.length - 1, currentIndex + 1);
+      nextIndex = Math.min(siblingGroups.length - 1, currentIndex + 1);
     } else if (direction === 'top') {
       nextIndex = 0;
     } else if (direction === 'bottom') {
-      nextIndex = categoryGroups.length - 1;
+      nextIndex = siblingGroups.length - 1;
     }
 
     if (nextIndex === currentIndex) {
@@ -142,17 +167,17 @@ export class LeekFundConfig extends BaseConfig {
       return Promise.resolve(groups);
     }
 
-    const nextCategoryGroups = [...categoryGroups];
-    const [movingGroup] = nextCategoryGroups.splice(currentIndex, 1);
-    nextCategoryGroups.splice(nextIndex, 0, movingGroup);
+    const nextSiblingGroups = [...siblingGroups];
+    const [movingGroup] = nextSiblingGroups.splice(currentIndex, 1);
+    nextSiblingGroups.splice(nextIndex, 0, movingGroup);
 
-    let categoryIndex = 0;
+    let siblingIndex = 0;
     const nextGroups = groups.map((item) => {
-      if (item.category !== group.category) {
+      if (item.category !== group.category || item.parentId !== group.parentId) {
         return item;
       }
-      const nextGroup = nextCategoryGroups[categoryIndex];
-      categoryIndex += 1;
+      const nextGroup = nextSiblingGroups[siblingIndex];
+      siblingIndex += 1;
       return nextGroup;
     });
 
@@ -173,9 +198,14 @@ export class LeekFundConfig extends BaseConfig {
       return Promise.resolve(groups);
     }
 
-    const nextGroups = groups.filter((item) => item.id !== groupId);
+    const childGroupCount = groups.filter((item) => item.parentId === groupId).length;
+    const nextGroups = groups.filter((item) => item.id !== groupId && item.parentId !== groupId);
     return this.setStockGroups(nextGroups).then(() => {
-      window.showInformationMessage(`股票分组已删除，组内股票不会删除。`);
+      window.showInformationMessage(
+        childGroupCount
+          ? `一级分组及其 ${childGroupCount} 个二级分组已删除，组内股票不会删除。`
+          : `股票分组已删除，组内股票不会删除。`
+      );
       if (cb && typeof cb === 'function') {
         cb(group, nextGroups);
       }
@@ -197,12 +227,20 @@ export class LeekFundConfig extends BaseConfig {
       return Promise.resolve(groups);
     }
 
-    // 检查同类别下是否有重名
+    // 一级分组按市场校验重名，二级分组按父级校验重名。
     const nameExists = groups.some(
-      (item) => item.category === group.category && item.name === trimmedName && item.id !== groupId
+      (item) =>
+        item.category === group.category &&
+        item.parentId === group.parentId &&
+        item.name === trimmedName &&
+        item.id !== groupId
     );
     if (nameExists) {
-      window.showWarningMessage(`同一市场分类下分组名称「${trimmedName}」已存在。`);
+      window.showWarningMessage(
+        group.parentId
+          ? `同一一级分组下二级分组名称「${trimmedName}」已存在。`
+          : `同一市场分类下一级分组名称「${trimmedName}」已存在。`
+      );
       return Promise.resolve(groups);
     }
 
@@ -406,11 +444,13 @@ export class LeekFundConfig extends BaseConfig {
     const stockCodes: string[] = Array.isArray(group.stockCodes)
       ? (uniq(group.stockCodes.filter((code: any) => typeof code === 'string' && code)) as string[])
       : [];
+    const parentId = typeof group.parentId === 'string' ? group.parentId.trim() : '';
     return {
       id,
       name,
       category: group.category,
       stockCodes,
+      ...(parentId ? { parentId } : {}),
     };
   }
 

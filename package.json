@@ -64,6 +64,31 @@
         "icon": "$(new-folder)"
       },
       {
+        "command": "leek-fund.createStockSubGroup",
+        "title": "创建二级分组",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "leek-fund.expandAllStockGroups",
+        "title": "展开下级分组",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "leek-fund.collapseAllStockGroups",
+        "title": "折叠下级分组",
+        "icon": "$(collapse-all)"
+      },
+      {
+        "command": "leek-fund.expandStockSubGroups",
+        "title": "展开下级分组",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "leek-fund.collapseStockSubGroups",
+        "title": "折叠下级分组",
+        "icon": "$(collapse-all)"
+      },
+      {
         "command": "leek-fund.moveStockGroupUp",
         "title": "分组上移",
         "icon": "$(arrow-up)"
@@ -124,6 +149,11 @@
         "command": "leek-fund.toggleHoldingStock",
         "title": "切换持仓状态",
         "icon": "$(tag)"
+      },
+      {
+        "command": "leek-fund.toggleWatchStock",
+        "title": "切换关注状态",
+        "icon": "$(eye)"
       },
       {
         "command": "leek-fund.selectStockGroup",
@@ -202,63 +232,93 @@
       ],
       "view/item/context": [
         {
+          "command": "leek-fund.expandAllStockGroups",
+          "when": "view == leekFundView.stock && viewItem == stockCategory",
+          "group": "inline@1"
+        },
+        {
+          "command": "leek-fund.collapseAllStockGroups",
+          "when": "view == leekFundView.stock && viewItem == stockCategory",
+          "group": "inline@2"
+        },
+        {
           "command": "leek-fund.createStockGroup",
-          "when": "view == leekFundView.stock && viewItem == category",
+          "when": "view == leekFundView.stock && viewItem == stockCategory",
           "group": "group1"
         },
         {
+          "command": "leek-fund.createStockSubGroup",
+          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "group": "group1"
+        },
+        {
+          "command": "leek-fund.expandStockSubGroups",
+          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "group": "inline@1"
+        },
+        {
+          "command": "leek-fund.collapseStockSubGroups",
+          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "group": "inline@2"
+        },
+        {
           "command": "leek-fund.setStockTop",
-          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockCategory && viewItem != stockGroup && viewItem != stockSubGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
           "group": "group1"
         },
         {
           "command": "leek-fund.selectStockGroup",
-          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockCategory && viewItem != stockGroup && viewItem != stockSubGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
           "group": "group1"
         },
         {
           "command": "leek-fund.setStockTop",
-          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockCategory && viewItem != stockGroup && viewItem != stockSubGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
           "group": "inline"
         },
         {
           "command": "leek-fund.toggleHoldingStock",
-          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockCategory && viewItem != stockGroup && viewItem != stockSubGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
+          "group": "inline"
+        },
+        {
+          "command": "leek-fund.toggleWatchStock",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockCategory && viewItem != stockGroup && viewItem != stockSubGroup && viewItem != stockGroupBuiltin && viewItem!=nodata",
           "group": "inline"
         },
         {
           "command": "leek-fund.moveStockGroupUp",
-          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "when": "view == leekFundView.stock && (viewItem == stockGroup || viewItem == stockSubGroup)",
           "group": "group2"
         },
         {
           "command": "leek-fund.moveStockGroupDown",
-          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "when": "view == leekFundView.stock && (viewItem == stockGroup || viewItem == stockSubGroup)",
           "group": "group2"
         },
         {
           "command": "leek-fund.moveStockGroupTop",
-          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "when": "view == leekFundView.stock && (viewItem == stockGroup || viewItem == stockSubGroup)",
           "group": "group2"
         },
         {
           "command": "leek-fund.moveStockGroupBottom",
-          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "when": "view == leekFundView.stock && (viewItem == stockGroup || viewItem == stockSubGroup)",
           "group": "group2"
         },
         {
           "command": "leek-fund.deleteStockGroup",
-          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "when": "view == leekFundView.stock && (viewItem == stockGroup || viewItem == stockSubGroup)",
           "group": "group3"
         },
         {
           "command": "leek-fund.renameStockGroup",
-          "when": "view == leekFundView.stock && viewItem == stockGroup",
+          "when": "view == leekFundView.stock && (viewItem == stockGroup || viewItem == stockSubGroup)",
           "group": "group3"
         },
         {
           "command": "leek-fund.deleteStock",
-          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockGroup && viewItem != stockGroupBuiltin",
+          "when": "view == leekFundView.stock && viewItem != category && viewItem != stockCategory && viewItem != stockGroup && viewItem != stockSubGroup && viewItem != stockGroupBuiltin",
           "group": "group5"
         },
         {
@@ -370,16 +430,6 @@
           "type": "boolean",
           "default": true,
           "description": "默认展开A股"
-        },
-        "leek-fund.expandHKStock": {
-          "type": "boolean",
-          "default": false,
-          "description": "默认展开港股"
-        },
-        "leek-fund.expandUSStock": {
-          "type": "boolean",
-          "default": false,
-          "description": "默认展开美股"
         }
       }
     },

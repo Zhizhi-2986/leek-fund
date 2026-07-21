@@ -50,6 +50,14 @@ export async function activate(context: ExtensionContext) {
     treeDataProvider: nodeStockProvider,
     dragAndDropController: nodeStockProvider,
   } as any);
+  context.subscriptions.push(
+    stockTreeView.onDidCollapseElement(({ element }) => {
+      nodeStockProvider.setTreeItemExpanded(element, false);
+    }),
+    stockTreeView.onDidExpandElement(({ element }) => {
+      nodeStockProvider.setTreeItemExpanded(element, true);
+    })
+  );
 
   // fix when TreeView collapse https://github.com/giscafer/leek-fund/issues/31
   const manualRequest = () => {

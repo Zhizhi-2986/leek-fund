@@ -115,7 +115,6 @@ export enum StockCategory {
   A = 'A Stock',
   US = 'US Stock',
   HK = 'HK Stock',
-  ETF = 'ETF',
   NODATA = 'Not Support Stock',
 }
 
@@ -124,6 +123,7 @@ export interface StockGroupConfig {
   name: string;
   category: StockCategory.A | StockCategory.HK | StockCategory.US;
   stockCodes: string[];
+  parentId?: string;
 }
 
 export type ForexData = {

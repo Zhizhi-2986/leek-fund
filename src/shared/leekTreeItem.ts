@@ -8,6 +8,7 @@ type LeekTreeItemOptions = {
   isStockGroup?: boolean;
   stockGroupId?: string;
   stockGroupCategory?: StockCategory;
+  stockGroupParentId?: string;
 };
 
 export class LeekTreeItem extends TreeItem {
@@ -17,6 +18,7 @@ export class LeekTreeItem extends TreeItem {
   isStockGroup: boolean;
   stockGroupId: string | undefined;
   stockGroupCategory: StockCategory | undefined;
+  stockGroupParentId: string | undefined;
   contextValue: string | undefined;
   _itemType?: TreeItemType;
 
@@ -32,6 +34,7 @@ export class LeekTreeItem extends TreeItem {
     this.isStockGroup = Boolean(options.isStockGroup);
     this.stockGroupId = options.stockGroupId;
     this.stockGroupCategory = options.stockGroupCategory;
+    this.stockGroupParentId = options.stockGroupParentId;
     const {
       showLabel,
       isStock,
