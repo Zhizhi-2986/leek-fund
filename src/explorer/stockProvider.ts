@@ -159,7 +159,11 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
             parentGroupId,
           })
         );
-        this.reportDragAndDropEvent(`drag group ids=${customGroups.map((item) => item.stockGroupId).join(',')} category=${category}`);
+        this.reportDragAndDropEvent(
+          `drag group ids=${customGroups
+            .map((item) => item.stockGroupId)
+            .join(',')} category=${category}`
+        );
       }
       return;
     }
@@ -180,7 +184,9 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
 
   async handleDrop(target: LeekTreeItem | undefined, dataTransfer: any): Promise<void> {
     this.reportDragAndDropEvent(
-      `drop target=${this.describeDropTarget(target)} mimes=${this.describeDataTransferMimeTypes(dataTransfer)}`
+      `drop target=${this.describeDropTarget(target)} mimes=${this.describeDataTransferMimeTypes(
+        dataTransfer
+      )}`
     );
     if (!target) return;
     const transferItem =
@@ -198,12 +204,7 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     this.reportDragAndDropEvent(`drop payload type=${payload.type} ids=${payload.ids.join(',')}`);
 
     if (payload.type === 'group') {
-      await this.handleGroupDrop(
-        target,
-        payload.ids,
-        payload.category,
-        payload.parentGroupId
-      );
+      await this.handleGroupDrop(target, payload.ids, payload.category, payload.parentGroupId);
     } else {
       await this.handleStockDrop(target, payload.ids, payload.sourceGroupId);
     }
@@ -214,7 +215,9 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     draggedStockIds: string[],
     sourceGroupId?: string
   ): Promise<void> {
-    const currentConfig = flattenDeep(LeekFundConfig.getConfig('leek-fund.stocks') || []) as string[];
+    const currentConfig = flattenDeep(
+      LeekFundConfig.getConfig('leek-fund.stocks') || []
+    ) as string[];
     const draggedIdSet = new Set(draggedStockIds);
     const movingIds = currentConfig.filter((code) => draggedIdSet.has(code));
     if (!movingIds.length) return;
@@ -240,8 +243,13 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
       this.refresh();
       return;
     }
-    if (targetGroupId && (this.isHoldingGroupId(targetGroupId) || this.isWatchGroupId(targetGroupId))) {
-      vscode.window.showInformationMessage('请通过股票右键的”切换持仓状态”或”切换关注状态”标记或取消标记。');
+    if (
+      targetGroupId &&
+      (this.isHoldingGroupId(targetGroupId) || this.isWatchGroupId(targetGroupId))
+    ) {
+      vscode.window.showInformationMessage(
+        '请通过股票右键的”切换持仓状态”或”切换关注状态”标记或取消标记。'
+      );
       return;
     }
     if (targetGroupId && !this.isUngroupedGroupId(targetGroupId)) {
@@ -261,13 +269,17 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     const targetCategory = this.getGroupDropTargetCategory(target);
     if (!targetCategory) {
       this.reportDragAndDropEvent(
-        `group drop ignored: no target category raw=${String(target.stockGroupCategory)} id=${String(target.stockGroupId || target.id || '')}`
+        `group drop ignored: no target category raw=${String(
+          target.stockGroupCategory
+        )} id=${String(target.stockGroupId || target.id || '')}`
       );
       vscode.window.showWarningMessage('请将自定义分组拖动到同一市场分类或自定义分组上。');
       return;
     }
     if (targetCategory !== sourceCategory) {
-      this.reportDragAndDropEvent(`group drop ignored: cross category target=${targetCategory} source=${sourceCategory}`);
+      this.reportDragAndDropEvent(
+        `group drop ignored: cross category target=${targetCategory} source=${sourceCategory}`
+      );
       vscode.window.showWarningMessage('只能在同一市场分类内拖动分组。');
       return;
     }
@@ -293,13 +305,14 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     const draggedGroupIdSet = new Set(draggedGroupIds);
     const movingGroups = groups.filter((group) => draggedGroupIdSet.has(group.id));
     if (!movingGroups.length) {
-      this.reportDragAndDropEvent(`group drop ignored: no moving groups ids=${draggedGroupIds.join(',')}`);
+      this.reportDragAndDropEvent(
+        `group drop ignored: no moving groups ids=${draggedGroupIds.join(',')}`
+      );
       return;
     }
     if (
       movingGroups.some(
-        (group) =>
-          group.category !== sourceCategory || group.parentId !== sourceParentGroupId
+        (group) => group.category !== sourceCategory || group.parentId !== sourceParentGroupId
       )
     ) {
       this.reportDragAndDropEvent('group drop ignored: moving group category mismatch');
@@ -308,10 +321,11 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     }
 
     const categoryGroups = groups.filter(
-      (group) =>
-        group.category === sourceCategory && group.parentId === sourceParentGroupId
+      (group) => group.category === sourceCategory && group.parentId === sourceParentGroupId
     );
-    const remainingCategoryGroups = categoryGroups.filter((group) => !draggedGroupIdSet.has(group.id));
+    const remainingCategoryGroups = categoryGroups.filter(
+      (group) => !draggedGroupIdSet.has(group.id)
+    );
     const targetIndex = this.getGroupDropInsertIndex(
       target,
       categoryGroups,
@@ -332,10 +346,7 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
 
     let categoryIndex = 0;
     const nextGroups = groups.map((group) => {
-      if (
-        group.category !== sourceCategory ||
-        group.parentId !== sourceParentGroupId
-      ) {
+      if (group.category !== sourceCategory || group.parentId !== sourceParentGroupId) {
         return group;
       }
       const nextGroup = nextCategoryGroups[categoryIndex];
@@ -350,7 +361,9 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     }
     await LeekFundConfig.setStockGroups(nextGroups);
     this.reportDragAndDropEvent(
-      `group drop updated category=${sourceCategory} insertIndex=${targetIndex} ids=${draggedGroupIds.join(',')}`
+      `group drop updated category=${sourceCategory} insertIndex=${targetIndex} ids=${draggedGroupIds.join(
+        ','
+      )}`
     );
     vscode.window.showInformationMessage('股票分组顺序已更新。');
     this.refresh();
@@ -364,16 +377,23 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
       const childGroupCount = element.stockGroupId
         ? this.getChildGroups(element.stockGroupId).length
         : 0;
+      const groupId = String(element.stockGroupId || element.id);
+      const isChildGroup = Boolean(element.stockGroupParentId);
+      let collapsibleState: TreeItemCollapsibleState;
+      if (!stocks.length && !childGroupCount) {
+        collapsibleState = TreeItemCollapsibleState.Collapsed;
+      } else if (isChildGroup) {
+        collapsibleState = TreeItemCollapsibleState.Collapsed;
+      } else {
+        collapsibleState = this.collapsedStockGroupIds.has(groupId)
+          ? TreeItemCollapsibleState.Collapsed
+          : TreeItemCollapsibleState.Expanded;
+      }
       return {
         id: this.getExpandableTreeItemId(element),
         label: element.info.name,
         description: `涨${upCount} 跌${downCount}`,
-        collapsibleState:
-          stocks.length || childGroupCount
-            ? this.collapsedStockGroupIds.has(String(element.stockGroupId || element.id))
-              ? TreeItemCollapsibleState.Collapsed
-              : TreeItemCollapsibleState.Expanded
-            : TreeItemCollapsibleState.Collapsed,
+        collapsibleState,
         command: undefined,
         contextValue: element.contextValue,
       };
@@ -389,8 +409,7 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
       const downCount = stocks.filter(
         (item) => item.info.percent !== undefined && item.info.percent < 0
       ).length;
-      const desc =
-        upCount + downCount > 0 ? `涨${upCount} 跌${downCount}` : undefined;
+      const desc = upCount + downCount > 0 ? `涨${upCount} 跌${downCount}` : undefined;
       const category = this.normalizeSupportedStockCategory(element.id);
       const configuredExpanded = element.id === StockCategory.A && this.expandAStock;
       const expanded = category
@@ -572,7 +591,10 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     );
   }
 
-  private getStockGroupStocks(groupNode: LeekTreeItem, stocks = this.service.stockList): LeekTreeItem[] {
+  private getStockGroupStocks(
+    groupNode: LeekTreeItem,
+    stocks = this.service.stockList
+  ): LeekTreeItem[] {
     const category = groupNode.stockGroupCategory;
     if (!this.isSupportedStockCategory(category)) {
       return [];
@@ -587,7 +609,9 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
       return this.getUngroupedStocks(stocks, category);
     }
 
-    const group = LeekFundConfig.getStockGroups().find((item) => item.id === groupNode.stockGroupId);
+    const group = LeekFundConfig.getStockGroups().find(
+      (item) => item.id === groupNode.stockGroupId
+    );
     if (!group) {
       return [];
     }
@@ -605,20 +629,14 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     if (!groupNode.stockGroupId || groupNode.stockGroupParentId) {
       return directStocks;
     }
-    const childStockCodes = this.getChildGroups(groupNode.stockGroupId).reduce(
-      (codes, group) => {
-        codes.push(...group.stockCodes);
-        return codes;
-      },
-      [] as string[]
-    );
+    const childStockCodes = this.getChildGroups(groupNode.stockGroupId).reduce((codes, group) => {
+      codes.push(...group.stockCodes);
+      return codes;
+    }, [] as string[]);
     if (!childStockCodes.length) {
       return directStocks;
     }
-    const allCodes = new Set([
-      ...directStocks.map((stock) => stock.info.code),
-      ...childStockCodes,
-    ]);
+    const allCodes = new Set([...directStocks.map((stock) => stock.info.code), ...childStockCodes]);
     return stocks.filter((stock) => allCodes.has(stock.info.code));
   }
 
@@ -629,7 +647,8 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     const holdingCodes = this.getHoldingCodeSet(category);
     return stocks.filter(
       (stock) =>
-        this.getStockCategoryByCode(stock.info.code) === category && holdingCodes.has(stock.info.code)
+        this.getStockCategoryByCode(stock.info.code) === category &&
+        holdingCodes.has(stock.info.code)
     );
   }
 
@@ -666,7 +685,9 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     return LeekFundConfig.getStockGroups().filter((group) => group.parentId === parentGroupId);
   }
 
-  private getGroupedCodeSet(category: StockCategory.A | StockCategory.HK | StockCategory.US): Set<string> {
+  private getGroupedCodeSet(
+    category: StockCategory.A | StockCategory.HK | StockCategory.US
+  ): Set<string> {
     const codes = this.getGroupsByCategory(category).reduce((result, group) => {
       result.push(...group.stockCodes);
       return result;
@@ -674,7 +695,9 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     return new Set(codes);
   }
 
-  private getHoldingCodeSet(category: StockCategory.A | StockCategory.HK | StockCategory.US): Set<string> {
+  private getHoldingCodeSet(
+    category: StockCategory.A | StockCategory.HK | StockCategory.US
+  ): Set<string> {
     const holdingCodes = [...getStockTreeHoldingCodeSet()].filter(
       (code) => this.getStockCategoryByCode(code) === category
     );
@@ -733,10 +756,13 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     targetStockId: string
   ): Promise<void> {
     const movingSet = new Set(movingIds);
-    const currentConfig = flattenDeep(LeekFundConfig.getConfig('leek-fund.stocks') || []) as string[];
+    const currentConfig = flattenDeep(
+      LeekFundConfig.getConfig('leek-fund.stocks') || []
+    ) as string[];
     const remainingConfig = currentConfig.filter((code) => !movingSet.has(code));
     const targetIndex = targetStockId ? remainingConfig.indexOf(targetStockId) : -1;
-    const insertIndex = targetIndex >= 0 ? targetIndex : this.findCategoryTailIndex(remainingConfig, category);
+    const insertIndex =
+      targetIndex >= 0 ? targetIndex : this.findCategoryTailIndex(remainingConfig, category);
     const nextConfig = [
       ...remainingConfig.slice(0, insertIndex),
       ...movingIds,
@@ -758,7 +784,9 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
   }
 
   private isSortableStockItem(item: LeekTreeItem): boolean {
-    return !item.isCategory && !item.isStockGroup && item.contextValue !== 'nodata' && Boolean(item.id);
+    return (
+      !item.isCategory && !item.isStockGroup && item.contextValue !== 'nodata' && Boolean(item.id)
+    );
   }
 
   private isCustomStockGroupItem(item: LeekTreeItem): boolean {
@@ -801,7 +829,9 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
   private describeDropTarget(target: LeekTreeItem | undefined): string {
     if (!target) return 'root';
     if (target.isStockGroup) {
-      return `group:${target.stockGroupId || target.id}:${target.contextValue}:${target.stockGroupCategory}`;
+      return `group:${target.stockGroupId || target.id}:${target.contextValue}:${
+        target.stockGroupCategory
+      }`;
     }
     if (target.isCategory) {
       return `category:${target.id}`;
@@ -920,9 +950,7 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     return groupId || undefined;
   }
 
-  private getDropTargetCategory(
-    target: LeekTreeItem
-  ): SupportedStockCategory | undefined {
+  private getDropTargetCategory(target: LeekTreeItem): SupportedStockCategory | undefined {
     if (target.isStockGroup) {
       return this.isSupportedStockCategory(target.stockGroupCategory)
         ? target.stockGroupCategory
@@ -937,7 +965,9 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
   }
 
   private getCategoryById(id: string): StockCategory | undefined {
-    return [StockCategory.A, StockCategory.HK, StockCategory.US].find((category) => category === id);
+    return [StockCategory.A, StockCategory.HK, StockCategory.US].find(
+      (category) => category === id
+    );
   }
 
   private getGroupDropTargetCategory(target: LeekTreeItem): SupportedStockCategory | undefined {
@@ -980,12 +1010,16 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     if (remainingTargetIndex < 0) {
       return -1;
     }
-    const originalMovingIndex = categoryGroups.findIndex((group) => draggedGroupIdSet.has(group.id));
+    const originalMovingIndex = categoryGroups.findIndex((group) =>
+      draggedGroupIdSet.has(group.id)
+    );
     const originalTargetIndex = categoryGroups.findIndex((group) => group.id === targetGroupId);
     if (originalMovingIndex < 0 || originalTargetIndex < 0) {
       return -1;
     }
-    return originalMovingIndex < originalTargetIndex ? remainingTargetIndex + 1 : remainingTargetIndex;
+    return originalMovingIndex < originalTargetIndex
+      ? remainingTargetIndex + 1
+      : remainingTargetIndex;
   }
 
   private getGroupDropTargetGroupId(
@@ -1030,14 +1064,14 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     return undefined;
   }
 
-  private isSupportedStockCategory(
-    category: unknown
-  ): category is SupportedStockCategory {
+  private isSupportedStockCategory(category: unknown): category is SupportedStockCategory {
     return Boolean(this.normalizeSupportedStockCategory(category));
   }
 
   private normalizeSupportedStockCategory(category: unknown): SupportedStockCategory | undefined {
-    const value = String(category || '').replace(/\s+/g, ' ').trim();
+    const value = String(category || '')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (value === StockCategory.A) {
       return StockCategory.A;
     }
@@ -1089,5 +1123,4 @@ export class StockProvider implements TreeDataProvider<LeekTreeItem> {
     }, -1);
     return lastIndex < 0 ? config.length : lastIndex + 1;
   }
-
 }

@@ -30,47 +30,53 @@ import {
   useMutation,
   usePluginI18n,
   useQuery,
-  useQueryClient
-} from '@hermes/plugin-sdk'
-import { useEffect, useRef, useState } from 'react'
-import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
+  useQueryClient,
+} from '@hermes/plugin-sdk';
+import { useEffect, useRef, useState } from 'react';
+import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 
-const ID = 'leek-fund'
-const SNAPSHOT_KEY = [ID, 'snapshot']
+const ID = 'leek-fund';
+const SNAPSHOT_KEY = [ID, 'snapshot'];
 
 function createApi(ctx) {
   const request = (path, method = 'GET', body) =>
     ctx.rest(path, {
       method,
       ...(body === undefined ? {} : { body }),
-      timeoutMs: 12000
-    })
+      timeoutMs: 12000,
+    });
 
   return {
     snapshot: () => request('/snapshot'),
-    searchStocks: query => request(`/stock-search?q=${encodeURIComponent(query)}`),
-    addStock: code => request('/stocks', 'POST', { code }),
-    deleteStock: code => request(`/stocks/${encodeURIComponent(code)}`, 'DELETE'),
-    createGroup: (category, name) => request('/groups', 'POST', { category, name }),
+    searchStocks: (query) =>
+      request(`/stock-search?q=${encodeURIComponent(query)}`),
+    addStock: (code) => request('/stocks', 'POST', { code }),
+    deleteStock: (code) =>
+      request(`/stocks/${encodeURIComponent(code)}`, 'DELETE'),
+    createGroup: (category, name) =>
+      request('/groups', 'POST', { category, name }),
     renameGroup: (groupId, name) =>
       request(`/groups/${encodeURIComponent(groupId)}`, 'PATCH', { name }),
-    deleteGroup: groupId => request(`/groups/${encodeURIComponent(groupId)}`, 'DELETE'),
+    deleteGroup: (groupId) =>
+      request(`/groups/${encodeURIComponent(groupId)}`, 'DELETE'),
     moveStock: (code, groupId) =>
-      request(`/stocks/${encodeURIComponent(code)}/group`, 'POST', { group_id: groupId }),
+      request(`/stocks/${encodeURIComponent(code)}/group`, 'POST', {
+        group_id: groupId,
+      }),
     reorderStock: (code, targetGroupId, targetCode, placement) =>
       request(`/stocks/${encodeURIComponent(code)}/reorder`, 'POST', {
         target_group_id: targetGroupId,
         target_code: targetCode,
-        placement
+        placement,
       }),
     reorderGroup: (groupId, targetGroupId, placement) =>
       request(`/groups/${encodeURIComponent(groupId)}/reorder`, 'POST', {
         target_group_id: targetGroupId,
-        placement
+        placement,
       }),
     updateFlags: (code, flags) =>
-      request(`/stocks/${encodeURIComponent(code)}/flags`, 'POST', flags)
-  }
+      request(`/stocks/${encodeURIComponent(code)}/flags`, 'POST', flags),
+  };
 }
 
 function useSnapshot(api) {
@@ -79,141 +85,144 @@ function useSnapshot(api) {
     queryFn: api.snapshot,
     refetchInterval: 5000,
     staleTime: 4000,
-    retry: 1
-  })
+    retry: 1,
+  });
 }
 
 function usePluginAction(api) {
-  const queryClient = useQueryClient()
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: action => action.run(api),
+    mutationFn: (action) => action.run(api),
     onSuccess: (_data, action) => {
-      queryClient.invalidateQueries({ queryKey: SNAPSHOT_KEY })
+      queryClient.invalidateQueries({ queryKey: SNAPSHOT_KEY });
       if (action.success) {
-        host.notify({ kind: 'success', message: action.success })
+        host.notify({ kind: 'success', message: action.success });
       }
     },
-    onError: error => {
-      host.notifyError(error, 'LeekFund 操作失败')
-    }
-  })
+    onError: (error) => {
+      host.notifyError(error, 'LeekFund 操作失败');
+    },
+  });
 }
 
 function dropPlacement(event) {
-  const bounds = event.currentTarget.getBoundingClientRect()
-  return event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+  const bounds = event.currentTarget.getBoundingClientRect();
+  return event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after';
 }
 
 function useTreeDrag(onAction) {
-  const [item, setItem] = useState(null)
-  const [target, setTarget] = useState(null)
-  const itemRef = useRef(null)
+  const [item, setItem] = useState(null);
+  const [target, setTarget] = useState(null);
+  const itemRef = useRef(null);
 
   const start = (event, nextItem) => {
-    event.stopPropagation()
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', JSON.stringify(nextItem))
-    itemRef.current = nextItem
-    setItem(nextItem)
-    setTarget(null)
-  }
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', JSON.stringify(nextItem));
+    itemRef.current = nextItem;
+    setItem(nextItem);
+    setTarget(null);
+  };
 
   const end = () => {
-    itemRef.current = null
-    setItem(null)
-    setTarget(null)
-  }
+    itemRef.current = null;
+    setItem(null);
+    setTarget(null);
+  };
 
   const canDropOnGroup = (category, group) => {
-    const currentItem = itemRef.current
-    if (!currentItem) return false
+    const currentItem = itemRef.current;
+    if (!currentItem) return false;
     if (currentItem.kind === 'stock') {
-      if (currentItem.category !== category) return false
-      const sourceOverlay = currentItem.groupId === 'holding' || currentItem.groupId === 'watch'
-      const targetOverlay = group.id === 'holding' || group.id === 'watch'
+      if (currentItem.category !== category) return false;
+      const sourceOverlay =
+        currentItem.groupId === 'holding' || currentItem.groupId === 'watch';
+      const targetOverlay = group.id === 'holding' || group.id === 'watch';
       return sourceOverlay || targetOverlay
         ? sourceOverlay && currentItem.groupId === group.id
-        : true
+        : true;
     }
     return (
-      currentItem.kind === 'group'
-      && !group.builtin
-      && currentItem.id !== group.id
-      && currentItem.category === category
-      && (currentItem.parentId || null) === (group.parent_id || null)
-    )
-  }
+      currentItem.kind === 'group' &&
+      !group.builtin &&
+      currentItem.id !== group.id &&
+      currentItem.category === category &&
+      (currentItem.parentId || null) === (group.parent_id || null)
+    );
+  };
 
   const dragOverStock = (event, category, groupId, stockCode) => {
-    const currentItem = itemRef.current
-    const sourceOverlay = currentItem?.groupId === 'holding'
-      || currentItem?.groupId === 'watch'
-    const targetOverlay = groupId === 'holding' || groupId === 'watch'
+    const currentItem = itemRef.current;
+    const sourceOverlay =
+      currentItem?.groupId === 'holding' || currentItem?.groupId === 'watch';
+    const targetOverlay = groupId === 'holding' || groupId === 'watch';
     if (
-      currentItem?.kind !== 'stock'
-      || currentItem.code === stockCode
-      || currentItem.category !== category
-      || ((sourceOverlay || targetOverlay) && currentItem.groupId !== groupId)
+      currentItem?.kind !== 'stock' ||
+      currentItem.code === stockCode ||
+      currentItem.category !== category ||
+      ((sourceOverlay || targetOverlay) && currentItem.groupId !== groupId)
     ) {
-      return
+      return;
     }
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
     setTarget({
       kind: 'stock',
       id: `${groupId}:${stockCode}`,
-      placement: dropPlacement(event)
-    })
-  }
+      placement: dropPlacement(event),
+    });
+  };
 
   const dropOnStock = (event, category, groupId, stockCode) => {
-    const currentItem = itemRef.current
-    const sourceOverlay = currentItem?.groupId === 'holding'
-      || currentItem?.groupId === 'watch'
-    const targetOverlay = groupId === 'holding' || groupId === 'watch'
+    const currentItem = itemRef.current;
+    const sourceOverlay =
+      currentItem?.groupId === 'holding' || currentItem?.groupId === 'watch';
+    const targetOverlay = groupId === 'holding' || groupId === 'watch';
     if (
-      currentItem?.kind !== 'stock'
-      || currentItem.code === stockCode
-      || currentItem.category !== category
-      || ((sourceOverlay || targetOverlay) && currentItem.groupId !== groupId)
+      currentItem?.kind !== 'stock' ||
+      currentItem.code === stockCode ||
+      currentItem.category !== category ||
+      ((sourceOverlay || targetOverlay) && currentItem.groupId !== groupId)
     ) {
-      return
+      return;
     }
-    event.preventDefault()
-    const placement = dropPlacement(event)
+    event.preventDefault();
+    const placement = dropPlacement(event);
     onAction({
-      run: api => api.reorderStock(currentItem.code, groupId, stockCode, placement)
-    })
-    end()
-  }
+      run: (api) =>
+        api.reorderStock(currentItem.code, groupId, stockCode, placement),
+    });
+    end();
+  };
 
   const dragOverGroup = (event, category, group) => {
-    if (!canDropOnGroup(category, group)) return
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
+    if (!canDropOnGroup(category, group)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
     setTarget({
       kind: 'group',
       id: group.id,
-      placement: itemRef.current.kind === 'group' ? dropPlacement(event) : 'inside'
-    })
-  }
+      placement:
+        itemRef.current.kind === 'group' ? dropPlacement(event) : 'inside',
+    });
+  };
 
   const dropOnGroup = (event, category, group) => {
-    if (!canDropOnGroup(category, group)) return
-    const currentItem = itemRef.current
-    event.preventDefault()
+    if (!canDropOnGroup(category, group)) return;
+    const currentItem = itemRef.current;
+    event.preventDefault();
     if (currentItem.kind === 'stock') {
       onAction({
-        run: api => api.reorderStock(currentItem.code, group.id, '', 'after')
-      })
+        run: (api) => api.reorderStock(currentItem.code, group.id, '', 'after'),
+      });
     } else {
-      const placement = dropPlacement(event)
+      const placement = dropPlacement(event);
       onAction({
-        run: api => api.reorderGroup(currentItem.id, group.id, placement)
-      })
+        run: (api) => api.reorderGroup(currentItem.id, group.id, placement),
+      });
     }
-    end()
-  }
+    end();
+  };
 
   return {
     item,
@@ -223,129 +232,130 @@ function useTreeDrag(onAction) {
     dragOverStock,
     dropOnStock,
     dragOverGroup,
-    dropOnGroup
-  }
+    dropOnGroup,
+  };
 }
 
 function TextActionDialog({ dialog, onClose }) {
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState('');
 
   useEffect(() => {
-    setValue(dialog?.initial || '')
-  }, [dialog])
+    setValue(dialog?.initial || '');
+  }, [dialog]);
 
-  if (!dialog) return null
+  if (!dialog) return null;
 
   const submit = () => {
-    const next = value.trim()
-    if (!next) return
-    dialog.submit(next)
-    onClose()
-  }
+    const next = value.trim();
+    if (!next) return;
+    dialog.submit(next);
+    onClose();
+  };
 
   return jsx(Dialog, {
     open: true,
-    onOpenChange: open => {
-      if (!open) onClose()
+    onOpenChange: (open) => {
+      if (!open) onClose();
     },
     children: jsxs(DialogContent, {
       className: 'max-w-sm',
       children: [
         jsx(DialogHeader, {
-          children: jsx(DialogTitle, { children: dialog.title })
+          children: jsx(DialogTitle, { children: dialog.title }),
         }),
         jsx(Input, {
           autoFocus: true,
           value,
           placeholder: dialog.placeholder,
-          onChange: event => setValue(event.target.value),
-          onKeyDown: event => {
-            if (event.key === 'Enter') submit()
-          }
+          onChange: (event) => setValue(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key === 'Enter') submit();
+          },
         }),
         jsxs(DialogFooter, {
           children: [
             jsx(Button, {
               variant: 'text',
               onClick: onClose,
-              children: dialog.cancelLabel
+              children: dialog.cancelLabel,
             }),
             jsx(Button, {
               disabled: !value.trim(),
               onClick: submit,
-              children: dialog.submitLabel
-            })
-          ]
-        })
-      ]
-    })
-  })
+              children: dialog.submitLabel,
+            }),
+          ],
+        }),
+      ],
+    }),
+  });
 }
 
 function StockSearchDialog({ open, api, t, onSelect, onClose }) {
-  const [query, setQuery] = useState('')
-  const [items, setItems] = useState([])
-  const [isSearching, setIsSearching] = useState(false)
-  const [error, setError] = useState('')
+  const [query, setQuery] = useState('');
+  const [items, setItems] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (!open) {
-      setQuery('')
-      setItems([])
-      setIsSearching(false)
-      setError('')
-      return undefined
+      setQuery('');
+      setItems([]);
+      setIsSearching(false);
+      setError('');
+      return undefined;
     }
 
-    const keyword = query.trim()
+    const keyword = query.trim();
     if (!keyword) {
-      setItems([])
-      setIsSearching(false)
-      setError('')
-      return undefined
+      setItems([]);
+      setIsSearching(false);
+      setError('');
+      return undefined;
     }
 
-    let active = true
+    let active = true;
     const timer = window.setTimeout(() => {
-      setIsSearching(true)
-      setError('')
-      api.searchStocks(keyword)
-        .then(result => {
-          if (!active) return
-          setItems(Array.isArray(result?.items) ? result.items : [])
+      setIsSearching(true);
+      setError('');
+      api
+        .searchStocks(keyword)
+        .then((result) => {
+          if (!active) return;
+          setItems(Array.isArray(result?.items) ? result.items : []);
         })
         .catch(() => {
-          if (!active) return
-          setItems([])
-          setError(t('stockSearchFailed'))
+          if (!active) return;
+          setItems([]);
+          setError(t('stockSearchFailed'));
         })
         .finally(() => {
-          if (active) setIsSearching(false)
-        })
-    }, 300)
+          if (active) setIsSearching(false);
+        });
+    }, 300);
 
     return () => {
-      active = false
-      window.clearTimeout(timer)
-    }
-  }, [api, open, query, t])
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [api, open, query, t]);
 
   return jsx(Dialog, {
     open,
-    onOpenChange: nextOpen => {
-      if (!nextOpen) onClose()
+    onOpenChange: (nextOpen) => {
+      if (!nextOpen) onClose();
     },
     children: jsxs(DialogContent, {
       className: 'max-w-sm',
       children: [
         jsx(DialogHeader, {
-          children: jsx(DialogTitle, { children: t('addStock') })
+          children: jsx(DialogTitle, { children: t('addStock') }),
         }),
         jsx(Input, {
           autoFocus: true,
           value: query,
           placeholder: t('stockSearchPlaceholder'),
-          onChange: event => setQuery(event.target.value)
+          onChange: (event) => setQuery(event.target.value),
         }),
         jsx(ScrollArea, {
           className: 'h-64',
@@ -355,29 +365,33 @@ function StockSearchDialog({ open, api, t, onSelect, onClose }) {
             children: [
               isSearching
                 ? jsx('div', {
-                    className: 'px-2 py-3 text-center text-xs text-(--ui-text-tertiary)',
-                    children: t('stockSearching')
+                    className:
+                      'px-2 py-3 text-center text-xs text-(--ui-text-tertiary)',
+                    children: t('stockSearching'),
                   })
                 : null,
               error
                 ? jsx('div', {
-                    className: 'px-2 py-3 text-center text-xs text-(--ui-danger)',
-                    children: error
+                    className:
+                      'px-2 py-3 text-center text-xs text-(--ui-danger)',
+                    children: error,
                   })
                 : null,
               !isSearching && !error && query.trim() && !items.length
                 ? jsx('div', {
-                    className: 'px-2 py-3 text-center text-xs text-(--ui-text-tertiary)',
-                    children: t('stockSearchEmpty')
+                    className:
+                      'px-2 py-3 text-center text-xs text-(--ui-text-tertiary)',
+                    children: t('stockSearchEmpty'),
                   })
                 : null,
               !query.trim()
                 ? jsx('div', {
-                    className: 'px-2 py-3 text-center text-xs text-(--ui-text-tertiary)',
-                    children: t('stockSearchHint')
+                    className:
+                      'px-2 py-3 text-center text-xs text-(--ui-text-tertiary)',
+                    children: t('stockSearchHint'),
                   })
                 : null,
-              ...items.map(item =>
+              ...items.map((item) =>
                 jsxs(
                   'button',
                   {
@@ -387,111 +401,119 @@ function StockSearchDialog({ open, api, t, onSelect, onClose }) {
                       'hover:bg-(--chrome-action-hover) focus-visible:bg-(--ui-control-active-background)'
                     ),
                     onClick: () => {
-                      onSelect(item)
-                      onClose()
+                      onSelect(item);
+                      onClose();
                     },
                     children: [
                       jsx('span', {
-                        className: 'min-w-0 flex-1 truncate text-(--ui-text-primary)',
-                        children: item.name
+                        className:
+                          'min-w-0 flex-1 truncate text-(--ui-text-primary)',
+                        children: item.name,
                       }),
                       jsx('span', {
-                        className: 'shrink-0 font-mono text-(--ui-text-tertiary)',
-                        children: item.code
-                      })
-                    ]
+                        className:
+                          'shrink-0 font-mono text-(--ui-text-tertiary)',
+                        children: item.code,
+                      }),
+                    ],
                   },
                   item.code
                 )
-              )
-            ]
-          })
+              ),
+            ],
+          }),
         }),
         jsx(DialogFooter, {
           children: jsx(Button, {
             variant: 'text',
             onClick: onClose,
-            children: t('cancel')
-          })
-        })
-      ]
-    })
-  })
+            children: t('cancel'),
+          }),
+        }),
+      ],
+    }),
+  });
 }
 
 function TreeChevron({ expanded }) {
   return jsx(Codicon, {
     className: 'shrink-0 text-(--ui-text-tertiary)',
     name: expanded ? 'chevron-down' : 'chevron-right',
-    size: '0.75rem'
-  })
+    size: '0.75rem',
+  });
 }
 
 function trendClass(percent) {
-  const value = Number.parseFloat(String(percent))
-  if (value > 0) return 'text-red-700 dark:text-red-300'
-  if (value < 0) return 'text-emerald-700 dark:text-emerald-300'
-  return 'text-(--ui-text-tertiary)'
+  const value = Number.parseFloat(String(percent));
+  if (value > 0) return 'text-red-700 dark:text-red-300';
+  if (value < 0) return 'text-emerald-700 dark:text-emerald-300';
+  return 'text-(--ui-text-tertiary)';
 }
 
 function trendStyle(percent) {
-  const value = Number.parseFloat(String(percent))
-  return Number.isFinite(value) && value !== 0 ? { opacity: 0.72 } : undefined
+  const value = Number.parseFloat(String(percent));
+  return Number.isFinite(value) && value !== 0 ? { opacity: 0.72 } : undefined;
 }
 
 function groupTrend(group) {
-  const stocksByCode = new Map()
+  const stocksByCode = new Map();
 
-  const collect = current => {
-    const stocks = Array.isArray(current.stocks) ? current.stocks : []
-    stocks.forEach(stock => stocksByCode.set(stock.code, stock))
-    const children = Array.isArray(current.children) ? current.children : []
-    children.forEach(collect)
-  }
+  const collect = (current) => {
+    const stocks = Array.isArray(current.stocks) ? current.stocks : [];
+    stocks.forEach((stock) => stocksByCode.set(stock.code, stock));
+    const children = Array.isArray(current.children) ? current.children : [];
+    children.forEach(collect);
+  };
 
-  collect(group)
+  collect(group);
 
   return [...stocksByCode.values()].reduce(
     (summary, stock) => {
-      const percent = Number.parseFloat(String(stock.percent))
-      if (!Number.isFinite(percent)) return summary
-      if (percent > 0) summary.up += 1
-      else if (percent < 0) summary.down += 1
-      else summary.flat += 1
-      return summary
+      const percent = Number.parseFloat(String(stock.percent));
+      if (!Number.isFinite(percent)) return summary;
+      if (percent > 0) summary.up += 1;
+      else if (percent < 0) summary.down += 1;
+      else summary.flat += 1;
+      return summary;
     },
     { up: 0, down: 0, flat: 0 }
-  )
+  );
 }
 
 function GroupTrend({ group, t }) {
-  const summary = groupTrend(group)
+  const summary = groupTrend(group);
 
   return jsxs('span', {
-    className: 'flex shrink-0 items-center gap-1 text-[0.625rem] font-normal tabular-nums',
-    'aria-label': t('groupTrendSummary', summary.up, summary.down, summary.flat),
+    className:
+      'flex shrink-0 items-center gap-1 text-[0.625rem] font-normal tabular-nums',
+    'aria-label': t(
+      'groupTrendSummary',
+      summary.up,
+      summary.down,
+      summary.flat
+    ),
     children: [
       jsx('span', {
         className: trendClass(1),
         style: trendStyle(1),
-        children: `↑${summary.up}`
+        children: `↑${summary.up}`,
       }),
       jsx('span', {
         className: trendClass(-1),
         style: trendStyle(-1),
-        children: `↓${summary.down}`
+        children: `↓${summary.down}`,
       }),
       jsx('span', {
         className: 'text-(--ui-text-quaternary)',
-        children: `=${summary.flat}`
-      })
-    ]
-  })
+        children: `=${summary.flat}`,
+      }),
+    ],
+  });
 }
 
 function MoveGroupNode({ group, expandedGroups, onToggle, onSelect }) {
-  const children = Array.isArray(group.children) ? group.children : []
-  const expanded = expandedGroups[group.id] === true
+  const children = Array.isArray(group.children) ? group.children : [];
+  const expanded = expandedGroups[group.id] === true;
 
   return jsxs('div', {
     children: [
@@ -506,7 +528,7 @@ function MoveGroupNode({ group, expandedGroups, onToggle, onSelect }) {
                   'hover:bg-(--chrome-action-hover) focus-visible:bg-(--ui-control-active-background)'
                 ),
                 onClick: () => onToggle(group.id),
-                children: jsx(TreeChevron, { expanded })
+                children: jsx(TreeChevron, { expanded }),
               })
             : jsx('span', { className: 'h-7 w-7 shrink-0' }),
           jsx('button', {
@@ -517,57 +539,60 @@ function MoveGroupNode({ group, expandedGroups, onToggle, onSelect }) {
               'focus-visible:bg-(--ui-control-active-background)'
             ),
             onClick: () => onSelect(group.id, group.name),
-            children: group.name
-          })
-        ]
+            children: group.name,
+          }),
+        ],
       }),
       children.length && expanded
         ? jsx('div', {
             className: 'ml-3 border-l border-(--ui-stroke-tertiary) pl-2',
-            children: children.map(child =>
+            children: children.map((child) =>
               jsx(
                 MoveGroupNode,
                 {
                   group: child,
                   expandedGroups,
                   onToggle,
-                  onSelect
+                  onSelect,
                 },
                 child.id
               )
-            )
+            ),
           })
-        : null
-    ]
-  })
+        : null,
+    ],
+  });
 }
 
 function StockMoveDialog({ dialog, t, onMove, onClose }) {
-  const [expandedGroups, setExpandedGroups] = useState({})
+  const [expandedGroups, setExpandedGroups] = useState({});
 
   useEffect(() => {
-    setExpandedGroups({})
-  }, [dialog])
+    setExpandedGroups({});
+  }, [dialog]);
 
-  if (!dialog) return null
+  if (!dialog) return null;
 
   const selectGroup = (groupId, groupName) => {
-    onMove(dialog.stock, groupId, groupName)
-    onClose()
-  }
+    onMove(dialog.stock, groupId, groupName);
+    onClose();
+  };
 
   return jsx(Dialog, {
     open: true,
-    onOpenChange: open => {
-      if (!open) onClose()
+    onOpenChange: (open) => {
+      if (!open) onClose();
     },
     children: jsxs(DialogContent, {
       className: 'max-w-sm',
       children: [
         jsx(DialogHeader, {
           children: jsx(DialogTitle, {
-            children: t('moveStockTitle', dialog.stock.name || dialog.stock.code)
-          })
+            children: t(
+              'moveStockTitle',
+              dialog.stock.name || dialog.stock.code
+            ),
+          }),
         }),
         jsx(ScrollArea, {
           className: 'h-64',
@@ -587,39 +612,39 @@ function StockMoveDialog({ dialog, t, onMove, onClose }) {
                       'focus-visible:bg-(--ui-control-active-background)'
                     ),
                     onClick: () => selectGroup('ungrouped', t('ungrouped')),
-                    children: t('ungrouped')
-                  })
-                ]
+                    children: t('ungrouped'),
+                  }),
+                ],
               }),
-              ...dialog.groups.map(group =>
+              ...dialog.groups.map((group) =>
                 jsx(
                   MoveGroupNode,
                   {
                     group,
                     expandedGroups,
-                    onToggle: groupId =>
-                      setExpandedGroups(current => ({
+                    onToggle: (groupId) =>
+                      setExpandedGroups((current) => ({
                         ...current,
-                        [groupId]: current[groupId] !== true
+                        [groupId]: current[groupId] !== true,
                       })),
-                    onSelect: selectGroup
+                    onSelect: selectGroup,
                   },
                   group.id
                 )
-              )
-            ]
-          })
+              ),
+            ],
+          }),
         }),
         jsx(DialogFooter, {
           children: jsx(Button, {
             variant: 'text',
             onClick: onClose,
-            children: t('cancel')
-          })
-        })
-      ]
-    })
-  })
+            children: t('cancel'),
+          }),
+        }),
+      ],
+    }),
+  });
 }
 
 function StockRow({
@@ -632,48 +657,51 @@ function StockRow({
   dnd,
   t,
   onAction,
-  openMove
+  openMove,
 }) {
-  const percent = String(stock.percent || '--')
-  const quoteClass = trendClass(percent)
-  const quoteStyle = trendStyle(percent)
-  const dropTarget = dnd.target?.kind === 'stock'
-    && dnd.target.id === `${groupId}:${stock.code}`
-    ? dnd.target
-    : null
+  const percent = String(stock.percent || '--');
+  const quoteClass = trendClass(percent);
+  const quoteStyle = trendStyle(percent);
+  const dropTarget =
+    dnd.target?.kind === 'stock' && dnd.target.id === `${groupId}:${stock.code}`
+      ? dnd.target
+      : null;
   const rowStyle = {
     paddingLeft: level > 0 ? '1.5rem' : '1rem',
     cursor: canSort ? 'grab' : undefined,
     ...(dropTarget
       ? {
-          boxShadow: dropTarget.placement === 'before'
-            ? 'inset 0 2px 0 var(--ui-accent)'
-            : 'inset 0 -2px 0 var(--ui-accent)'
+          boxShadow:
+            dropTarget.placement === 'before'
+              ? 'inset 0 2px 0 var(--ui-accent)'
+              : 'inset 0 -2px 0 var(--ui-accent)',
         }
-      : {})
-  }
+      : {}),
+  };
 
   const row = jsxs('button', {
     type: 'button',
     draggable: canSort,
-    'aria-grabbed': canSort && dnd.item?.kind === 'stock' && dnd.item.code === stock.code,
+    'aria-grabbed':
+      canSort && dnd.item?.kind === 'stock' && dnd.item.code === stock.code,
     className: cn(
       'flex w-full items-center gap-2 py-1 pr-2 text-left text-xs outline-none',
       'hover:bg-(--chrome-action-hover) focus-visible:bg-(--ui-control-active-background)'
     ),
     style: rowStyle,
-    onDragStart: event => {
-      if (!canSort) return
+    onDragStart: (event) => {
+      if (!canSort) return;
       dnd.start(event, {
         kind: 'stock',
         code: stock.code,
         category,
-        groupId
-      })
+        groupId,
+      });
     },
     onDragEnd: dnd.end,
-    onDragOver: event => dnd.dragOverStock(event, category, groupId, stock.code),
-    onDrop: event => dnd.dropOnStock(event, category, groupId, stock.code),
+    onDragOver: (event) =>
+      dnd.dragOverStock(event, category, groupId, stock.code),
+    onDrop: (event) => dnd.dropOnStock(event, category, groupId, stock.code),
     children: [
       jsxs('span', {
         className: 'min-w-0 flex-1',
@@ -683,29 +711,30 @@ function StockRow({
             children: [
               jsx('span', {
                 className: 'truncate text-(--ui-text-primary)',
-                children: stock.name || stock.code
+                children: stock.name || stock.code,
               }),
               stock.holding
                 ? jsx(Codicon, {
                     className: 'text-(--ui-accent)',
                     name: 'tag',
-                    size: '0.7rem'
+                    size: '0.7rem',
                   })
                 : null,
               stock.watch
                 ? jsx(Codicon, {
                     className: 'text-(--ui-accent)',
                     name: 'eye',
-                    size: '0.7rem'
+                    size: '0.7rem',
                   })
-                : null
-            ]
+                : null,
+            ],
           }),
           jsx('span', {
-            className: 'block truncate text-[0.6875rem] text-(--ui-text-quaternary)',
-            children: stock.code
-          })
-        ]
+            className:
+              'block truncate text-[0.6875rem] text-(--ui-text-quaternary)',
+            children: stock.code,
+          }),
+        ],
       }),
       jsxs('span', {
         className: 'shrink-0 text-right tabular-nums',
@@ -713,67 +742,94 @@ function StockRow({
         children: [
           jsx('span', {
             className: cn('block', quoteClass),
-            children: stock.price || '--'
+            children: stock.price || '--',
           }),
           jsx('span', {
             className: cn('block text-[0.6875rem]', quoteClass),
-            children: percent === '--' ? percent : `${percent}%`
-          })
-        ]
-      })
-    ]
-  })
+            children: percent === '--' ? percent : `${percent}%`,
+          }),
+        ],
+      }),
+    ],
+  });
 
   const menuItems = [
-    jsx(ContextMenuItem, {
-      onSelect: () =>
-        onAction({
-          run: api => api.updateFlags(stock.code, { holding: !stock.holding }),
-          success: stock.holding ? t('holdingRemoved') : t('holdingAdded')
-        }),
-      children: stock.holding ? t('removeHolding') : t('markHolding')
-    }, 'holding'),
-    jsx(ContextMenuItem, {
-      onSelect: () =>
-        onAction({
-          run: api => api.updateFlags(stock.code, { watch: !stock.watch }),
-          success: stock.watch ? t('watchRemoved') : t('watchAdded')
-        }),
-      children: stock.watch ? t('removeWatch') : t('markWatch')
-    }, 'watch'),
-    jsx(ContextMenuItem, {
-      onSelect: () =>
-        onAction({
-          run: api => api.updateFlags(stock.code, { status_bar: !stock.in_status_bar }),
-          success: stock.in_status_bar ? t('tickerRemoved') : t('tickerAdded')
-        }),
-      children: stock.in_status_bar ? t('removeTicker') : t('addTicker')
-    }, 'ticker'),
-    jsx(ContextMenuSeparator, {}, 'flags-separator'),
-    jsx(ContextMenuItem, {
-      onSelect: () => openMove(stock, moveGroups),
-      children: t('moveStock')
-    }, 'move'),
-    jsx(ContextMenuSeparator, {}, 'delete-separator'),
-    jsx(ContextMenuItem, {
-      variant: 'destructive',
-      onSelect: () => {
-        if (!window.confirm(t('deleteStockConfirm', stock.name || stock.code))) return
-        onAction({
-          run: api => api.deleteStock(stock.code),
-          success: t('stockDeleted')
-        })
+    jsx(
+      ContextMenuItem,
+      {
+        onSelect: () =>
+          onAction({
+            run: (api) =>
+              api.updateFlags(stock.code, { holding: !stock.holding }),
+            success: stock.holding ? t('holdingRemoved') : t('holdingAdded'),
+          }),
+        children: stock.holding ? t('removeHolding') : t('markHolding'),
       },
-      children: t('deleteStock')
-    }, 'delete')
-  ]
+      'holding'
+    ),
+    jsx(
+      ContextMenuItem,
+      {
+        onSelect: () =>
+          onAction({
+            run: (api) => api.updateFlags(stock.code, { watch: !stock.watch }),
+            success: stock.watch ? t('watchRemoved') : t('watchAdded'),
+          }),
+        children: stock.watch ? t('removeWatch') : t('markWatch'),
+      },
+      'watch'
+    ),
+    jsx(
+      ContextMenuItem,
+      {
+        onSelect: () =>
+          onAction({
+            run: (api) =>
+              api.updateFlags(stock.code, { status_bar: !stock.in_status_bar }),
+            success: stock.in_status_bar
+              ? t('tickerRemoved')
+              : t('tickerAdded'),
+          }),
+        children: stock.in_status_bar ? t('removeTicker') : t('addTicker'),
+      },
+      'ticker'
+    ),
+    jsx(ContextMenuSeparator, {}, 'flags-separator'),
+    jsx(
+      ContextMenuItem,
+      {
+        onSelect: () => openMove(stock, moveGroups),
+        children: t('moveStock'),
+      },
+      'move'
+    ),
+    jsx(ContextMenuSeparator, {}, 'delete-separator'),
+    jsx(
+      ContextMenuItem,
+      {
+        variant: 'destructive',
+        onSelect: () => {
+          if (
+            !window.confirm(t('deleteStockConfirm', stock.name || stock.code))
+          )
+            return;
+          onAction({
+            run: (api) => api.deleteStock(stock.code),
+            success: t('stockDeleted'),
+          });
+        },
+        children: t('deleteStock'),
+      },
+      'delete'
+    ),
+  ];
 
   return jsxs(ContextMenu, {
     children: [
       jsx(ContextMenuTrigger, { asChild: true, children: row }),
-      jsx(ContextMenuContent, { className: 'min-w-44', children: menuItems })
-    ]
-  })
+      jsx(ContextMenuContent, { className: 'min-w-44', children: menuItems }),
+    ],
+  });
 }
 
 function GroupNode({
@@ -789,62 +845,66 @@ function GroupNode({
   dnd,
   openMove,
   openRename,
-  level = 0
+  level = 0,
 }) {
-  const childGroups = Array.isArray(group.children) ? group.children : []
-  const canSortGroup = !group.builtin
-  const groupDropTarget = dnd.target?.kind === 'group' && dnd.target.id === group.id
-    ? dnd.target
-    : null
+  const childGroups = Array.isArray(group.children) ? group.children : [];
+  const canSortGroup = !group.builtin;
+  const groupDropTarget =
+    dnd.target?.kind === 'group' && dnd.target.id === group.id
+      ? dnd.target
+      : null;
   const groupDropStyle = groupDropTarget
     ? groupDropTarget.placement === 'inside'
       ? { background: 'var(--chrome-action-hover)' }
       : {
-          boxShadow: groupDropTarget.placement === 'before'
-            ? 'inset 0 2px 0 var(--ui-accent)'
-            : 'inset 0 -2px 0 var(--ui-accent)'
+          boxShadow:
+            groupDropTarget.placement === 'before'
+              ? 'inset 0 2px 0 var(--ui-accent)'
+              : 'inset 0 -2px 0 var(--ui-accent)',
         }
-    : undefined
+    : undefined;
   const groupButton = jsxs('button', {
     type: 'button',
     draggable: canSortGroup,
-    'aria-grabbed': canSortGroup && dnd.item?.kind === 'group' && dnd.item.id === group.id,
+    'aria-grabbed':
+      canSortGroup && dnd.item?.kind === 'group' && dnd.item.id === group.id,
     className: cn(
       'flex w-full items-center gap-1.5 px-2 py-1 text-left text-xs font-medium',
       'text-(--ui-text-secondary) hover:bg-(--chrome-action-hover)'
     ),
     style: {
       cursor: canSortGroup ? 'grab' : undefined,
-      ...groupDropStyle
+      ...groupDropStyle,
     },
     onClick: onToggle,
-    onDragStart: event => {
-      if (!canSortGroup) return
+    onDragStart: (event) => {
+      if (!canSortGroup) return;
       dnd.start(event, {
         kind: 'group',
         id: group.id,
         category,
-        parentId: group.parent_id || null
-      })
+        parentId: group.parent_id || null,
+      });
     },
     onDragEnd: dnd.end,
-    onDragOver: event => dnd.dragOverGroup(event, category, group),
-    onDrop: event => dnd.dropOnGroup(event, category, group),
+    onDragOver: (event) => dnd.dragOverGroup(event, category, group),
+    onDrop: (event) => dnd.dropOnGroup(event, category, group),
     children: [
       jsx(TreeChevron, { expanded }),
       jsx(Codicon, {
         className: 'text-(--ui-text-tertiary)',
         name: group.builtin ? 'folder' : 'folder-library',
-        size: '0.8rem'
+        size: '0.8rem',
       }),
       jsx('span', { className: 'min-w-0 truncate', children: group.name }),
       jsx(GroupTrend, { group, t }),
       jsx('span', {
-        className: 'ml-auto shrink-0 text-[0.6875rem] font-normal text-(--ui-text-quaternary)',
-        children: String(group.count ?? group.stocks.length)
-      })
-    ]
-  })
+        className:
+          'ml-auto shrink-0 text-[0.6875rem] font-normal text-(--ui-text-quaternary)',
+        children: String(group.count ?? group.stocks.length),
+      }),
+    ],
+  });
 
   const header = group.builtin
     ? groupButton
@@ -855,23 +915,24 @@ function GroupNode({
             children: [
               jsx(ContextMenuItem, {
                 onSelect: () => openRename(group),
-                children: t('renameGroup')
+                children: t('renameGroup'),
               }),
               jsx(ContextMenuItem, {
                 variant: 'destructive',
                 onSelect: () => {
-                  if (!window.confirm(t('deleteGroupConfirm', group.name))) return
+                  if (!window.confirm(t('deleteGroupConfirm', group.name)))
+                    return;
                   onAction({
-                    run: api => api.deleteGroup(group.id),
-                    success: t('groupDeleted')
-                  })
+                    run: (api) => api.deleteGroup(group.id),
+                    success: t('groupDeleted'),
+                  });
                 },
-                children: t('deleteGroup')
-              })
-            ]
-          })
-        ]
-      })
+                children: t('deleteGroup'),
+              }),
+            ],
+          }),
+        ],
+      });
 
   return jsxs('div', {
     className: level > 0 ? 'ml-2' : undefined,
@@ -880,56 +941,60 @@ function GroupNode({
       expanded
         ? jsx('div', {
             className: 'ml-3 border-l border-(--ui-stroke-tertiary)',
-            children: group.stocks.length || childGroups.length
-              ? [
-                  ...group.stocks.map(stock =>
-                    jsx(
-                      StockRow,
-                      {
-                        stock,
-                        category,
-                        groupId: group.id,
-                        moveGroups,
-                        level,
-                        canSort: true,
-                        dnd,
-                        t,
-                        onAction,
-                        openMove
-                      },
-                      `${category}-${group.id}-${stock.code}`
-                    )
-                  ),
-                  ...childGroups.map(child =>
-                    jsx(
-                      GroupNode,
-                      {
-                        group: child,
-                        category,
-                        moveGroups,
-                        expanded: groupState[`${category}:${child.id}`] !== false,
-                        t,
-                        onToggle: () => onToggleGroup(`${category}:${child.id}`),
-                        groupState,
-                        onToggleGroup,
-                        onAction,
-                        dnd,
-                        openMove,
-                        openRename,
-                        level: level + 1
-                      },
-                      `${category}-${child.id}`
-                    )
-                  )
-                ]
-              : jsx('div', {
-                  className: 'px-3 py-1 text-[0.6875rem] text-(--ui-text-quaternary)',
-                  children: t('emptyGroup')
-                })
+            children:
+              group.stocks.length || childGroups.length
+                ? [
+                    ...group.stocks.map((stock) =>
+                      jsx(
+                        StockRow,
+                        {
+                          stock,
+                          category,
+                          groupId: group.id,
+                          moveGroups,
+                          level,
+                          canSort: true,
+                          dnd,
+                          t,
+                          onAction,
+                          openMove,
+                        },
+                        `${category}-${group.id}-${stock.code}`
+                      )
+                    ),
+                    ...childGroups.map((child) =>
+                      jsx(
+                        GroupNode,
+                        {
+                          group: child,
+                          category,
+                          moveGroups,
+                          expanded:
+                            groupState[`${category}:${child.id}`] === true,
+                          t,
+                          onToggle: () =>
+                            onToggleGroup(`${category}:${child.id}`),
+                          groupState,
+                          onToggleGroup,
+                          onAction,
+                          dnd,
+                          openMove,
+                          openRename,
+                          level: level + 1,
+                        },
+                        `${category}-${child.id}`
+                      )
+                    ),
+                  ]
+                : jsx('div', {
+                    className:
+                      'px-3 py-1 text-[0.6875rem] text-(--ui-text-quaternary)',
+                    children: t('emptyGroup'),
+                  }),
           })
-        : null
-    ]
-  })
+        : null,
+    ],
+  });
 }
 
 function MarketNode({
@@ -943,9 +1008,9 @@ function MarketNode({
   dnd,
   openMove,
   openCreateGroup,
-  openRename
+  openRename,
 }) {
-  const moveGroups = category.groups.filter(group => !group.builtin)
+  const moveGroups = category.groups.filter((group) => !group.builtin);
   const marketButton = jsxs('button', {
     type: 'button',
     className: cn(
@@ -956,13 +1021,16 @@ function MarketNode({
     onClick: onToggle,
     children: [
       jsx(TreeChevron, { expanded }),
-      jsx('span', { className: 'min-w-0 flex-1 truncate', children: category.name }),
+      jsx('span', {
+        className: 'min-w-0 flex-1 truncate',
+        children: category.name,
+      }),
       jsx('span', {
         className: 'text-[0.6875rem] font-normal text-(--ui-text-quaternary)',
-        children: String(category.count)
-      })
-    ]
-  })
+        children: String(category.count),
+      }),
+    ],
+  });
 
   return jsxs('div', {
     children: [
@@ -972,22 +1040,22 @@ function MarketNode({
           jsx(ContextMenuContent, {
             children: jsx(ContextMenuItem, {
               onSelect: () => openCreateGroup(category),
-              children: t('createGroup')
-            })
-          })
-        ]
+              children: t('createGroup'),
+            }),
+          }),
+        ],
       }),
       expanded
         ? jsx('div', {
             className: 'py-0.5',
-            children: category.groups.map(group =>
+            children: category.groups.map((group) =>
               jsx(
                 GroupNode,
                 {
                   group,
                   category: category.id,
                   moveGroups,
-                  expanded: groupState[`${category.id}:${group.id}`] !== false,
+                  expanded: groupState[`${category.id}:${group.id}`] === true,
                   t,
                   onToggle: () => onToggleGroup(`${category.id}:${group.id}`),
                   groupState,
@@ -996,70 +1064,73 @@ function MarketNode({
                   dnd,
                   openMove,
                   openRename,
-                  level: 0
+                  level: 0,
                 },
                 `${category.id}-${group.id}`
               )
-            )
+            ),
           })
-        : null
-    ]
-  })
+        : null,
+    ],
+  });
 }
 
 function StockPane({ api }) {
-  const t = usePluginI18n(ID)
-  const snapshot = useSnapshot(api)
-  const action = usePluginAction(api)
-  const [dialog, setDialog] = useState(null)
-  const [moveDialog, setMoveDialog] = useState(null)
-  const [stockSearchOpen, setStockSearchOpen] = useState(false)
-  const [marketState, setMarketState] = useState({ A: true })
-  const [groupState, setGroupState] = useState({})
+  const t = usePluginI18n(ID);
+  const snapshot = useSnapshot(api);
+  const action = usePluginAction(api);
+  const [dialog, setDialog] = useState(null);
+  const [moveDialog, setMoveDialog] = useState(null);
+  const [stockSearchOpen, setStockSearchOpen] = useState(false);
+  const [marketState, setMarketState] = useState({ A: true });
+  const [groupState, setGroupState] = useState({});
 
-  const onAction = next => action.mutate(next)
-  const dnd = useTreeDrag(onAction)
-  const toggleMarket = id => setMarketState(current => ({ ...current, [id]: !current[id] }))
-  const toggleGroup = id => setGroupState(current => ({ ...current, [id]: current[id] === false }))
+  const onAction = (next) => action.mutate(next);
+  const dnd = useTreeDrag(onAction);
+  const toggleMarket = (id) =>
+    setMarketState((current) => ({ ...current, [id]: !current[id] }));
+  const toggleGroup = (id) =>
+    setGroupState((current) => ({ ...current, [id]: !current[id] }));
 
-  const addStock = stock =>
+  const addStock = (stock) =>
     onAction({
-      run: currentApi => currentApi.addStock(stock.code),
-      success: t('stockAdded')
-    })
+      run: (currentApi) => currentApi.addStock(stock.code),
+      success: t('stockAdded'),
+    });
 
   const moveStock = (stock, groupId, groupName) =>
     onAction({
-      run: currentApi => currentApi.moveStock(stock.code, groupId),
-      success: groupId === 'ungrouped' ? t('movedUngrouped') : t('movedTo', groupName)
-    })
+      run: (currentApi) => currentApi.moveStock(stock.code, groupId),
+      success:
+        groupId === 'ungrouped' ? t('movedUngrouped') : t('movedTo', groupName),
+    });
 
-  const openCreateGroup = category =>
+  const openCreateGroup = (category) =>
     setDialog({
       title: t('createGroupFor', category.name),
       placeholder: t('groupNamePlaceholder'),
       submitLabel: t('create'),
       cancelLabel: t('cancel'),
-      submit: name =>
+      submit: (name) =>
         onAction({
-          run: currentApi => currentApi.createGroup(category.id, name),
-          success: t('groupCreated')
-        })
-    })
+          run: (currentApi) => currentApi.createGroup(category.id, name),
+          success: t('groupCreated'),
+        }),
+    });
 
-  const openRename = group =>
+  const openRename = (group) =>
     setDialog({
       title: t('renameGroup'),
       initial: group.name,
       placeholder: t('groupNamePlaceholder'),
       submitLabel: t('save'),
       cancelLabel: t('cancel'),
-      submit: name =>
+      submit: (name) =>
         onAction({
-          run: currentApi => currentApi.renameGroup(group.id, name),
-          success: t('groupRenamed')
-        })
-    })
+          run: (currentApi) => currentApi.renameGroup(group.id, name),
+          success: t('groupRenamed'),
+        }),
+    });
 
   if (snapshot.isLoading && !snapshot.data) {
     return jsxs('div', {
@@ -1067,35 +1138,36 @@ function StockPane({ api }) {
       children: [
         jsx(Skeleton, { className: 'h-7 w-full' }),
         jsx(Skeleton, { className: 'h-16 w-full' }),
-        jsx(Skeleton, { className: 'h-16 w-full' })
-      ]
-    })
+        jsx(Skeleton, { className: 'h-16 w-full' }),
+      ],
+    });
   }
 
   if (snapshot.isError && !snapshot.data) {
     return jsxs('div', {
-      className: 'flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs',
+      className:
+        'flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs',
       children: [
         jsx(Codicon, {
           className: 'text-(--ui-text-tertiary)',
           name: 'warning',
-          size: '1.25rem'
+          size: '1.25rem',
         }),
         jsx('div', {
           className: 'text-(--ui-text-secondary)',
-          children: t('backendUnavailable')
+          children: t('backendUnavailable'),
         }),
         jsx(Button, {
           variant: 'outline',
           size: 'xs',
           onClick: () => snapshot.refetch(),
-          children: t('retry')
-        })
-      ]
-    })
+          children: t('retry'),
+        }),
+      ],
+    });
   }
 
-  const data = snapshot.data || { categories: [], errors: [] }
+  const data = snapshot.data || { categories: [], errors: [] };
 
   return jsxs(Fragment, {
     children: [
@@ -1103,11 +1175,13 @@ function StockPane({ api }) {
         className: 'flex h-full min-h-0 flex-col text-xs',
         children: [
           jsxs('div', {
-            className: 'flex shrink-0 items-center gap-2 border-b border-(--ui-stroke-secondary) px-2 py-1',
+            className:
+              'flex shrink-0 items-center gap-2 border-b border-(--ui-stroke-secondary) px-2 py-1',
             children: [
               jsx('div', {
-                className: 'min-w-0 flex-1 truncate font-semibold text-(--ui-text-primary)',
-                children: 'LeekFund'
+                className:
+                  'min-w-0 flex-1 truncate font-semibold text-(--ui-text-primary)',
+                children: 'LeekFund',
               }),
               jsx(Tip, {
                 label: t('addStock'),
@@ -1115,8 +1189,8 @@ function StockPane({ api }) {
                   variant: 'ghost',
                   size: 'icon-xs',
                   onClick: () => setStockSearchOpen(true),
-                  children: jsx(Codicon, { name: 'add', size: '0.8rem' })
-                })
+                  children: jsx(Codicon, { name: 'add', size: '0.8rem' }),
+                }),
               }),
               jsx(Tip, {
                 label: t('refresh'),
@@ -1128,21 +1202,22 @@ function StockPane({ api }) {
                   children: jsx(Codicon, {
                     name: 'refresh',
                     size: '0.8rem',
-                    spinning: snapshot.isFetching
-                  })
-                })
-              })
-            ]
+                    spinning: snapshot.isFetching,
+                  }),
+                }),
+              }),
+            ],
           }),
           data.stale && data.errors?.length
             ? jsx('div', {
-                className: 'shrink-0 border-b border-(--ui-stroke-tertiary) px-2 py-1 text-[0.6875rem] text-(--ui-text-tertiary)',
-                children: t('staleData', data.errors[0])
+                className:
+                  'shrink-0 border-b border-(--ui-stroke-tertiary) px-2 py-1 text-[0.6875rem] text-(--ui-text-tertiary)',
+                children: t('staleData', data.errors[0]),
               })
             : null,
           jsx(ScrollArea, {
             className: 'min-h-0 flex-1',
-            children: data.categories.map(category =>
+            children: data.categories.map((category) =>
               jsx(
                 MarketNode,
                 {
@@ -1156,61 +1231,69 @@ function StockPane({ api }) {
                   dnd,
                   openMove: (stock, groups) => setMoveDialog({ stock, groups }),
                   openCreateGroup,
-                  openRename
+                  openRename,
                 },
                 category.id
               )
-            )
+            ),
           }),
           jsx('div', {
-            className: 'shrink-0 border-t border-(--ui-stroke-tertiary) px-2 py-1 text-[0.625rem] text-(--ui-text-quaternary)',
+            className:
+              'shrink-0 border-t border-(--ui-stroke-tertiary) px-2 py-1 text-[0.625rem] text-(--ui-text-quaternary)',
             children: data.updated_at
-              ? t('updatedAt', new Date(data.updated_at * 1000).toLocaleTimeString())
-              : t('notUpdated')
-          })
-        ]
+              ? t(
+                  'updatedAt',
+                  new Date(data.updated_at * 1000).toLocaleTimeString()
+                )
+              : t('notUpdated'),
+          }),
+        ],
       }),
       jsx(TextActionDialog, {
         dialog,
-        onClose: () => setDialog(null)
+        onClose: () => setDialog(null),
       }),
       jsx(StockSearchDialog, {
         open: stockSearchOpen,
         api,
         t,
         onSelect: addStock,
-        onClose: () => setStockSearchOpen(false)
+        onClose: () => setStockSearchOpen(false),
       }),
       jsx(StockMoveDialog, {
         dialog: moveDialog,
         t,
         onMove: moveStock,
-        onClose: () => setMoveDialog(null)
-      })
-    ]
-  })
+        onClose: () => setMoveDialog(null),
+      }),
+    ],
+  });
 }
 
 function StatusTicker({ api }) {
-  const t = usePluginI18n(ID)
-  const snapshot = useSnapshot(api)
-  const items = snapshot.data?.status_bar || []
+  const t = usePluginI18n(ID);
+  const snapshot = useSnapshot(api);
+  const items = snapshot.data?.status_bar || [];
   if (!items.length) {
     return jsx('span', {
-      className: 'inline-flex h-full items-center px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
-      children: snapshot.isError ? t('tickerUnavailable') : t('tickerLoading')
-    })
+      className:
+        'inline-flex h-full items-center px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
+      children: snapshot.isError ? t('tickerUnavailable') : t('tickerLoading'),
+    });
   }
 
   return jsx('div', {
-    className: 'inline-flex h-full items-center overflow-hidden whitespace-nowrap',
-    children: items.map(item => {
-      const percent = item.percent === '--' ? '--' : `${item.percent}%`
-      const label = `${item.name} ${item.price} ${percent}`
+    className:
+      'inline-flex h-full items-center overflow-hidden whitespace-nowrap',
+    children: items.map((item) => {
+      const percent = item.percent === '--' ? '--' : `${item.percent}%`;
+      const label = `${item.name} ${item.price} ${percent}`;
       return jsx(
         Tip,
         {
-          label: `${item.name} (${item.code}) · ${item.time || t('latestQuote')}`,
+          label: `${item.name} (${item.code}) · ${
+            item.time || t('latestQuote')
+          }`,
           children: jsx('span', {
             className: cn(
               'inline-flex h-full items-center border-l border-(--ui-stroke-tertiary)',
@@ -1218,13 +1301,13 @@ function StatusTicker({ api }) {
               trendClass(item.percent)
             ),
             style: trendStyle(item.percent),
-            children: label
-          })
+            children: label,
+          }),
         },
         item.code
-      )
-    })
-  })
+      );
+    }),
+  });
 }
 
 export default {
@@ -1246,13 +1329,14 @@ export default {
         refresh: 'Refresh',
         retry: 'Retry',
         createGroup: 'Create group',
-        createGroupFor: market => `Create group in ${market}`,
+        createGroupFor: (market) => `Create group in ${market}`,
         groupNamePlaceholder: 'Group name',
         renameGroup: 'Rename group',
         deleteGroup: 'Delete group',
-        deleteGroupConfirm: name => `Delete group “${name}”? Stocks will be kept.`,
+        deleteGroupConfirm: (name) =>
+          `Delete group “${name}”? Stocks will be kept.`,
         deleteStock: 'Delete stock',
-        deleteStockConfirm: name => `Delete “${name}” from the stock list?`,
+        deleteStockConfirm: (name) => `Delete “${name}” from the stock list?`,
         markHolding: 'Mark as holding',
         removeHolding: 'Remove holding mark',
         markWatch: 'Add to watch',
@@ -1260,13 +1344,15 @@ export default {
         addTicker: 'Show in status bar',
         removeTicker: 'Remove from status bar',
         moveStock: 'Move to…',
-        moveStockTitle: name => `Move “${name}”`,
+        moveStockTitle: (name) => `Move “${name}”`,
         ungrouped: 'Ungrouped',
-        groupTrendSummary: (up, down, flat) => `${up} up, ${down} down, ${flat} unchanged`,
+        groupTrendSummary: (up, down, flat) =>
+          `${up} up, ${down} down, ${flat} unchanged`,
         emptyGroup: 'No stocks',
-        backendUnavailable: 'LeekFund backend is unavailable. Enable the backend plugin, then fully quit and reopen Hermes Desktop.',
-        staleData: error => `Using cached quotes · ${error}`,
-        updatedAt: time => `Updated ${time}`,
+        backendUnavailable:
+          'LeekFund backend is unavailable. Enable the backend plugin, then fully quit and reopen Hermes Desktop.',
+        staleData: (error) => `Using cached quotes · ${error}`,
+        updatedAt: (time) => `Updated ${time}`,
         notUpdated: 'No successful quote update yet',
         latestQuote: 'Latest quote',
         tickerUnavailable: 'LeekFund unavailable',
@@ -1283,7 +1369,7 @@ export default {
         tickerAdded: 'Added to status bar',
         tickerRemoved: 'Removed from status bar',
         movedUngrouped: 'Moved to ungrouped',
-        movedTo: name => `Moved to ${name}`,
+        movedTo: (name) => `Moved to ${name}`,
       },
       zh: {
         addStock: '添加股票',
@@ -1298,13 +1384,14 @@ export default {
         refresh: '刷新行情',
         retry: '重试',
         createGroup: '创建分组',
-        createGroupFor: market => `在${market}中创建分组`,
+        createGroupFor: (market) => `在${market}中创建分组`,
         groupNamePlaceholder: '分组名称',
         renameGroup: '重命名分组',
         deleteGroup: '删除分组',
-        deleteGroupConfirm: name => `确定删除分组“${name}”吗？组内股票不会删除。`,
+        deleteGroupConfirm: (name) =>
+          `确定删除分组“${name}”吗？组内股票不会删除。`,
         deleteStock: '删除股票',
-        deleteStockConfirm: name => `确定从股票列表删除“${name}”吗？`,
+        deleteStockConfirm: (name) => `确定从股票列表删除“${name}”吗？`,
         markHolding: '标记为持仓',
         removeHolding: '取消持仓标记',
         markWatch: '添加关注',
@@ -1312,13 +1399,15 @@ export default {
         addTicker: '加入状态栏',
         removeTicker: '移出状态栏',
         moveStock: '移动到…',
-        moveStockTitle: name => `移动“${name}”`,
+        moveStockTitle: (name) => `移动“${name}”`,
         ungrouped: '未分组',
-        groupTrendSummary: (up, down, flat) => `上涨 ${up}，下跌 ${down}，平盘 ${flat}`,
+        groupTrendSummary: (up, down, flat) =>
+          `上涨 ${up}，下跌 ${down}，平盘 ${flat}`,
         emptyGroup: '暂无股票',
-        backendUnavailable: 'LeekFund 后端不可用，请启用后端插件，然后完全退出并重新打开 Hermes Desktop。',
-        staleData: error => `正在展示缓存行情 · ${error}`,
-        updatedAt: time => `更新时间 ${time}`,
+        backendUnavailable:
+          'LeekFund 后端不可用，请启用后端插件，然后完全退出并重新打开 Hermes Desktop。',
+        staleData: (error) => `正在展示缓存行情 · ${error}`,
+        updatedAt: (time) => `更新时间 ${time}`,
         notUpdated: '尚未成功更新行情',
         latestQuote: '最新行情',
         tickerUnavailable: 'LeekFund 不可用',
@@ -1335,11 +1424,11 @@ export default {
         tickerAdded: '已加入状态栏',
         tickerRemoved: '已移出状态栏',
         movedUngrouped: '已移动到未分组',
-        movedTo: name => `已移动到 ${name}`,
-      }
-    })
+        movedTo: (name) => `已移动到 ${name}`,
+      },
+    });
 
-    const api = createApi(ctx)
+    const api = createApi(ctx);
     ctx.register({
       id: 'stock-tree-sidebar',
       area: 'panes',
@@ -1347,15 +1436,15 @@ export default {
       data: {
         placement: 'left',
         dock: { pane: 'workspace', pos: 'left' },
-        width: '300px'
+        width: '300px',
       },
-      render: () => jsx(StockPane, { api })
-    })
+      render: () => jsx(StockPane, { api }),
+    });
     ctx.register({
       id: 'status-ticker',
       area: 'statusBar.right',
       order: 125,
-      render: () => jsx(StatusTicker, { api })
-    })
-  }
-}
+      render: () => jsx(StatusTicker, { api }),
+    });
+  },
+};
