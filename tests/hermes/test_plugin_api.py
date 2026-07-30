@@ -28,6 +28,15 @@ SYNC_SPEC.loader.exec_module(sync_vscode_data)
 
 
 class DesktopPluginStaticTest(unittest.TestCase):
+    def test_snapshot_refresh_interval_is_two_seconds(self) -> None:
+        source = DESKTOP_PLUGIN_PATH.read_text(encoding="utf-8")
+        start = source.index("function useSnapshot")
+        end = source.index("\n\nfunction usePluginAction", start)
+        snapshot_hook = source[start:end]
+
+        self.assertIn("refetchInterval: 2000", snapshot_hook)
+        self.assertIn("staleTime: 2000", snapshot_hook)
+
     def test_group_drop_reads_placement_before_async_action(self) -> None:
         source = DESKTOP_PLUGIN_PATH.read_text(encoding="utf-8")
         start = source.index("  const dropOnGroup =")
@@ -181,6 +190,38 @@ class PluginApiTest(unittest.TestCase):
             [item["code"] for item in snapshot["status_bar"]],
             plugin_api.DEFAULT_INDEX_CODES + ["sh600000"],
         )
+
+    def test_etf_price_uses_three_decimal_truncation(self) -> None:
+        cases = [
+            ("sh512880", "证券ETF国泰", "1.1269", "1.126"),
+            ("sh588990", "科创芯片ETF博时", "3.4499", "3.449"),
+            ("sz159272", "机器人FG", "0.7549", "0.754"),
+            ("sz159381", "创AI", "1.12", "1.120"),
+            ("sh500001", "测试ETF", "1.9999", "1.999"),
+            ("sh580001", "测试权证", "1.9999", "2.00"),
+            ("sh600000", "浦发银行", "10.129", "10.13"),
+        ]
+
+        for code, name, price, expected in cases:
+            with self.subTest(code=code, name=name):
+                quote = plugin_api._quote(code, name, price, "1.00")
+                self.assertIsNotNone(quote)
+                assert quote
+                self.assertEqual(quote["price"], expected)
+
+        stale_etf = plugin_api._stock_view(
+            "sh512880",
+            {
+                "sh512880": {
+                    "code": "sh512880",
+                    "name": "证券ETF国泰",
+                    "price": "1.12",
+                    "available": True,
+                }
+            },
+            plugin_api.default_state(),
+        )
+        self.assertEqual(stale_etf["price"], "1.120")
 
     def test_tencent_stock_search_only_returns_a_shares(self) -> None:
         payload = {

@@ -14,6 +14,7 @@ import re
 import threading
 import time
 import uuid
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from urllib import parse as urllib_parse
@@ -288,6 +289,29 @@ def _formatted(value: float, digits: int = 2) -> str:
     return f"{value:.{digits}f}"
 
 
+def _truncated(value: Any, digits: int) -> str:
+    try:
+        number = Decimal(str(value))
+        unit = Decimal(1).scaleb(-digits)
+        return format(number.quantize(unit, rounding=ROUND_DOWN), f".{digits}f")
+    except (InvalidOperation, TypeError, ValueError):
+        return _formatted(_number(value), digits)
+
+
+def _is_etf(code: str, name: str) -> bool:
+    return (
+        code.startswith(("sh51", "sh52", "sh56", "sh588", "sh589", "sz159"))
+        or "ETF" in str(name or "").upper()
+    )
+
+
+def _display_price(code: str, name: str, value: Any) -> str:
+    price_value = _number(value)
+    if _is_etf(code, name):
+        return _truncated(value, 3)
+    return _formatted(price_value, 3 if price_value < 1 else 2)
+
+
 def _quote(
     code: str,
     name: str,
@@ -308,7 +332,7 @@ def _quote(
     return {
         "code": code,
         "name": name,
-        "price": _formatted(price_value, 3 if price_value < 1 else 2),
+        "price": _display_price(code, name, price),
         "yestclose": _formatted(close_value, 3 if close_value < 1 else 2),
         "open": _formatted(_number(open_price), 3 if price_value < 1 else 2),
         "high": _formatted(_number(high), 3 if price_value < 1 else 2),
@@ -530,6 +554,8 @@ def _stock_view(
             "available": False,
         }
     )
+    if item.get("available") and item.get("price") not in {None, "--"}:
+        item["price"] = _display_price(code, item.get("name", ""), item["price"])
     item["holding"] = code in state["holding_codes"]
     item["watch"] = code in state["watch_codes"]
     item["in_status_bar"] = code in state["status_bar_stock_codes"]

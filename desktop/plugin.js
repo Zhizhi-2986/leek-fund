@@ -83,8 +83,8 @@ function useSnapshot(api) {
   return useQuery({
     queryKey: SNAPSHOT_KEY,
     queryFn: api.snapshot,
-    refetchInterval: 5000,
-    staleTime: 4000,
+    refetchInterval: 2000,
+    staleTime: 2000,
     retry: 1,
   });
 }
