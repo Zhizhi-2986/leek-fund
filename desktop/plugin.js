@@ -48,8 +48,12 @@ function createApi(ctx) {
 
   return {
     snapshot: () => request('/snapshot'),
+    ranking: (type) => request(`/speed-ranking?type=${encodeURIComponent(type)}`),
+    strategies: () => request('/strategies'),
     searchStocks: (query) =>
       request(`/stock-search?q=${encodeURIComponent(query)}`),
+    minuteStock: (code) =>
+      request(`/stock-minute?code=${encodeURIComponent(code)}`),
     addStock: (code) => request('/stocks', 'POST', { code }),
     deleteStock: (code) =>
       request(`/stocks/${encodeURIComponent(code)}`, 'DELETE'),
@@ -89,12 +93,35 @@ function useSnapshot(api) {
   });
 }
 
+function useRanking(api, type, enabled = true) {
+  return useQuery({
+    queryKey: [ID, 'speed-ranking', type],
+    queryFn: () => api.ranking(type),
+    enabled: Boolean(type) && enabled,
+    refetchInterval: 2000,
+    staleTime: 2000,
+    retry: 1,
+  });
+}
+
+function useStrategies(api, enabled = true) {
+  return useQuery({
+    queryKey: [ID, 'strategies'],
+    queryFn: api.strategies,
+    enabled,
+    refetchInterval: 2000,
+    staleTime: 2000,
+    retry: 1,
+  });
+}
+
 function usePluginAction(api) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (action) => action.run(api),
     onSuccess: (_data, action) => {
       queryClient.invalidateQueries({ queryKey: SNAPSHOT_KEY });
+      queryClient.invalidateQueries({ queryKey: [ID, 'speed-ranking'] });
       if (action.success) {
         host.notify({ kind: 'success', message: action.success });
       }
@@ -480,6 +507,25 @@ function groupTrend(group) {
   );
 }
 
+function groupAvgPercent(group) {
+  const values = [];
+
+  const collect = (current) => {
+    const stocks = Array.isArray(current.stocks) ? current.stocks : [];
+    stocks.forEach((stock) => {
+      const percent = Number.parseFloat(String(stock.percent));
+      if (Number.isFinite(percent)) values.push(percent);
+    });
+    const children = Array.isArray(current.children) ? current.children : [];
+    children.forEach(collect);
+  };
+
+  collect(group);
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
+}
+
 function GroupTrend({ group, t }) {
   const summary = groupTrend(group);
 
@@ -611,8 +657,8 @@ function StockMoveDialog({ dialog, t, onMove, onClose }) {
                       'text-(--ui-text-primary) hover:bg-(--chrome-action-hover)',
                       'focus-visible:bg-(--ui-control-active-background)'
                     ),
-                    onClick: () => selectGroup('ungrouped', t('ungrouped')),
-                    children: t('ungrouped'),
+                    onClick: () => selectGroup('watch', t('watch')),
+                    children: t('watch'),
                   }),
                 ],
               }),
@@ -647,6 +693,302 @@ function StockMoveDialog({ dialog, t, onMove, onClose }) {
   });
 }
 
+const MINUTE_CARD_WIDTH = 300;
+const MINUTE_CARD_HEIGHT = 224;
+
+const TOTAL_TRADING_MINUTES = 240;
+
+function tradingMinuteIndex(timeText) {
+  const match = String(timeText || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const minutes = Number(match[1]) * 60 + Number(match[2]);
+  if (minutes >= 570 && minutes <= 690) return minutes - 570;
+  if (minutes >= 780 && minutes <= 900) return 120 + (minutes - 780);
+  return null;
+}
+
+function buildMinuteChart(points, width, height, preClose) {
+  const pad = 6;
+  const count = points.length;
+  if (!count) return null;
+  const values = points.map((point) => Number.parseFloat(point.price));
+  const close = Number.parseFloat(preClose);
+  const lower = Math.min(...values, Number.isFinite(close) ? close : Infinity);
+  const upper = Math.max(...values, Number.isFinite(close) ? close : -Infinity);
+  const range = upper - lower || 1;
+  const chartW = width - pad * 2;
+  const chartH = height - pad * 2;
+  const toX = (point) => {
+    const index = tradingMinuteIndex(point.time);
+    if (index === null) return null;
+    return pad + (index / TOTAL_TRADING_MINUTES) * chartW;
+  };
+  const toY = (value) => pad + ((upper - value) / range) * chartH;
+  const lineSegments = [];
+  let lineStarted = false;
+  for (const point of points) {
+    const x = toX(point);
+    if (x === null) continue;
+    const y = toY(Number.parseFloat(point.price)).toFixed(1);
+    lineSegments.push(`${lineStarted ? 'L' : 'M'}${x.toFixed(1)},${y}`);
+    lineStarted = true;
+  }
+  const avgSegments = [];
+  let avgStarted = false;
+  for (const point of points) {
+    const x = toX(point);
+    const avg = Number.parseFloat(point.avg_price);
+    if (x === null || !Number.isFinite(avg)) continue;
+    const y = toY(avg).toFixed(1);
+    avgSegments.push(`${avgStarted ? 'L' : 'M'}${x.toFixed(1)},${y}`);
+    avgStarted = true;
+  }
+  return {
+    line: lineSegments.join(''),
+    avgLine: avgSegments.length ? avgSegments.join('') : null,
+    closeY: Number.isFinite(close) ? toY(close) : null,
+    lower,
+    upper,
+  };
+}
+
+function StockMinuteCard({ hover, data, isLoading, isError }) {
+  if (!hover) return null;
+  const chart = data?.points?.length
+    ? buildMinuteChart(data.points, 190, 116, data.pre_close)
+    : null;
+  const labelCloseY =
+    chart?.closeY == null
+      ? null
+      : (() => {
+          const top = 14;
+          const bottom = 108;
+          const gap = 17;
+          let y = chart.closeY + 3;
+          if (y < top + gap) y = top + gap;
+          if (y > bottom - gap) y = bottom - gap;
+          return y;
+        })();
+  const left =
+    hover.x + 14 + MINUTE_CARD_WIDTH > window.innerWidth
+      ? hover.x - 14 - MINUTE_CARD_WIDTH
+      : hover.x + 14;
+  const top =
+    hover.y + 14 + MINUTE_CARD_HEIGHT > window.innerHeight
+      ? hover.y - 14 - MINUTE_CARD_HEIGHT
+      : hover.y + 14;
+  const preClose = Number.parseFloat(data?.pre_close);
+  const price = Number.parseFloat(data?.price);
+  const percent =
+    Number.isFinite(preClose) && preClose > 0 && Number.isFinite(price)
+      ? ((price - preClose) / preClose) * 100
+      : null;
+  const percentText =
+    percent === null ? '--' : `${percent > 0 ? '+' : ''}${percent.toFixed(2)}%`;
+  const limitUp = Number.parseFloat(data?.limit_up);
+  const limitDown = Number.parseFloat(data?.limit_down);
+  const latest = data?.points?.length
+    ? data.points[data.points.length - 1]
+    : null;
+  const quoteDigits = (() => {
+    const sample =
+      Number.parseFloat(data?.pre_close) || Number.parseFloat(data?.price) || 0;
+    return Number.isFinite(sample) &&
+      Math.abs(sample * 100 - Math.round(sample * 100)) >= 0.005
+      ? 3
+      : 2;
+  })();
+  const avgPrice = Number.parseFloat(latest?.avg_price);
+  const avgText =
+    Number.isFinite(avgPrice) && avgPrice > 0
+      ? avgPrice.toFixed(quoteDigits)
+      : '--';
+  const fmtMA = (value) => {
+    const num = Number.parseFloat(value);
+    return Number.isFinite(num) && num > 0
+      ? num.toFixed(quoteDigits)
+      : '--';
+  };
+  const fmtLimit = (value) =>
+    Number.isFinite(value) && value > 0 ? value.toFixed(quoteDigits) : '--';
+  const highValue = Number.parseFloat(data?.high);
+  const lowValue = Number.parseFloat(data?.low);
+  const pctOf = (value) => {
+    if (
+      !Number.isFinite(preClose) ||
+      preClose <= 0 ||
+      !Number.isFinite(value) ||
+      value <= 0
+    ) {
+      return '';
+    }
+    const pct = ((value - preClose) / preClose) * 100;
+    return `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+  };
+  const highText = `${data?.high || '--'} ${pctOf(highValue)}`.trim();
+  const lowText = `${data?.low || '--'} ${pctOf(lowValue)}`.trim();
+
+  return jsx('div', {
+    className:
+      'pointer-events-none fixed z-50 flex flex-col gap-1.5 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-elevated) px-3 py-2 text-xs shadow-lg',
+    style: { left, top, width: MINUTE_CARD_WIDTH },
+    children: [
+      jsxs('div', {
+        className: 'flex w-full items-baseline gap-2',
+        children: [
+          jsxs('span', {
+            className: 'min-w-0 flex-1',
+            children: [
+              jsx('span', {
+                className:
+                  'block truncate font-medium text-(--ui-text-primary)',
+                children: hover.name,
+              }),
+              jsx('span', {
+                className:
+                  'block font-mono text-[0.6875rem] text-(--ui-text-quaternary)',
+                children: hover.code,
+              }),
+            ],
+          }),
+                    jsx('span', {
+            className: cn(
+              'font-mono tabular-nums',
+              trendClass(percentText)
+            ),
+            style: trendStyle(percentText),
+            children: data?.price || '--',
+          }),
+          jsx('span', {
+            className: cn(
+              'font-mono tabular-nums',
+              trendClass(percentText)
+            ),
+            style: trendStyle(percentText),
+            children: percentText,
+          }),
+        ],
+      }),
+      data == null && isLoading
+        ? jsx('div', {
+            className:
+              'py-6 text-center text-[0.6875rem] text-(--ui-text-tertiary)',
+            children: '分时数据加载中…',
+          })
+        : isError || !chart
+        ? jsx('div', {
+            className: 'py-6 text-center text-[0.6875rem] text-(--ui-danger)',
+            children: '分时数据加载失败',
+          })
+        : [
+            jsxs('div', {
+              className:
+                'flex w-full items-center justify-between text-[0.6875rem] text-(--ui-text-quaternary)',
+              children: [
+                jsx('span', {
+                  className: 'text-(--ui-text-quaternary)',
+                  children: `均价 ${avgText}`,
+                }),
+                jsx('span', {
+                  children: `涨停 ${fmtLimit(limitUp)}`,
+                }),
+                jsx('span', {
+                  children: `跌停 ${fmtLimit(limitDown)}`,
+
+
+                }),
+              ],
+            }),
+            jsx('svg', {
+              width: 292,
+              height: 122,
+              viewBox: '0 0 292 122',
+              className: 'block w-full',
+              children: [
+                jsx('line', {
+                  x1: 6,
+                  y1: 6,
+                  x2: 184,
+                  y2: 6,
+                  stroke: 'currentColor',
+                  strokeWidth: 1,
+                  className: 'text-(--ui-stroke-tertiary)',
+                }),
+                jsx('line', {
+                  x1: 6,
+                  y1: 110,
+                  x2: 184,
+                  y2: 110,
+                  stroke: 'currentColor',
+                  strokeWidth: 1,
+                  className: 'text-(--ui-stroke-tertiary)',
+                }),
+                chart.closeY != null
+                  ? jsx('line', {
+                      x1: 6,
+                      y1: chart.closeY,
+                      x2: 184,
+                      y2: chart.closeY,
+                      stroke: 'currentColor',
+                      strokeWidth: 1,
+                      strokeDasharray: '4 3',
+                      className: 'text-(--ui-text-quaternary)',
+                    })
+                  : null,
+                jsx('path', {
+                  d: chart.line,
+                  fill: 'none',
+                  stroke: 'currentColor',
+                  strokeWidth: 1.5,
+                  className: trendClass(percentText),
+                }),
+                chart.avgLine
+                  ? jsx('path', {
+                      d: chart.avgLine,
+                      fill: 'none',
+                      stroke: '#d9a441',
+                      strokeWidth: 1,
+                    })
+                  : null,
+                chart.closeY != null && labelCloseY != null
+                  ? jsx('text', {
+                      x: 190,
+                      y: labelCloseY,
+                      fontSize: 9,
+                      fill: '#000000',
+                      children: `昨收 ${data.pre_close || '--'}`,
+                    })
+                  : null,
+                jsx('text', {
+                  x: 190,
+                  y: 14,
+                  fontSize: 9,
+                  fill: '#000000',
+                  children: `最高 ${highText}`,
+                }),
+                jsx('text', {
+                  x: 190,
+                  y: 108,
+                  fontSize: 9,
+                  fill: '#000000',
+                  children: `最低 ${lowText}`,
+                }),
+              ],
+            }),
+            jsxs('div', {
+              className:
+                'flex w-full items-center justify-end gap-1.5 text-[0.6875rem] text-(--ui-text-quaternary)',
+              children: [
+                jsx('span', { children: `MA5 ${fmtMA(data.ma5)}` }),
+                jsx('span', { children: `MA10 ${fmtMA(data.ma10)}` }),
+                jsx('span', { children: `MA20 ${fmtMA(data.ma20)}` }),
+              ],
+            }),
+          ],
+    ],
+  });
+}
+
 function StockRow({
   stock,
   category,
@@ -658,10 +1000,33 @@ function StockRow({
   t,
   onAction,
   openMove,
+  onHoverEnter,
+  onHoverLeave,
 }) {
   const percent = String(stock.percent || '--');
   const quoteClass = trendClass(percent);
   const quoteStyle = trendStyle(percent);
+  const hoverTimer = useRef(null);
+  const hoverPosition = useRef({ x: 0, y: 0 });
+  const isAShare = /^(sh|sz|bj)/.test(String(stock.code || ''));
+  const handleMouseEnter = (event) => {
+    if (!isAShare) return;
+    hoverPosition.current = { x: event.clientX, y: event.clientY };
+    window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = window.setTimeout(() => {
+      if (typeof onHoverEnter === 'function') {
+        onHoverEnter(
+          stock.code,
+          stock.name || stock.code,
+          hoverPosition.current
+        );
+      }
+    }, 300);
+  };
+  const handleMouseLeave = () => {
+    window.clearTimeout(hoverTimer.current);
+    if (typeof onHoverLeave === 'function') onHoverLeave();
+  };
   const dropTarget =
     dnd.target?.kind === 'stock' && dnd.target.id === `${groupId}:${stock.code}`
       ? dnd.target
@@ -699,6 +1064,8 @@ function StockRow({
       });
     },
     onDragEnd: dnd.end,
+    onMouseEnter: handleMouseEnter,
+    onMouseLeave: handleMouseLeave,
     onDragOver: (event) =>
       dnd.dragOverStock(event, category, groupId, stock.code),
     onDrop: (event) => dnd.dropOnStock(event, category, groupId, stock.code),
@@ -803,25 +1170,31 @@ function StockRow({
       },
       'move'
     ),
-    jsx(ContextMenuSeparator, {}, 'delete-separator'),
-    jsx(
-      ContextMenuItem,
-      {
-        variant: 'destructive',
-        onSelect: () => {
-          if (
-            !window.confirm(t('deleteStockConfirm', stock.name || stock.code))
-          )
-            return;
-          onAction({
-            run: (api) => api.deleteStock(stock.code),
-            success: t('stockDeleted'),
-          });
-        },
-        children: t('deleteStock'),
-      },
-      'delete'
-    ),
+    ...(groupId === 'watch'
+      ? []
+      : [
+          jsx(ContextMenuSeparator, {}, 'delete-separator'),
+          jsx(
+            ContextMenuItem,
+            {
+              variant: 'destructive',
+              onSelect: () => {
+                if (
+                  !window.confirm(
+                    t('deleteStockConfirm', stock.name || stock.code)
+                  )
+                )
+                  return;
+                onAction({
+                  run: (api) => api.deleteStock(stock.code),
+                  success: t('stockDeleted'),
+                });
+              },
+              children: t('deleteStock'),
+            },
+            'delete'
+          ),
+        ]),
   ];
 
   return jsxs(ContextMenu, {
@@ -843,6 +1216,7 @@ function GroupNode({
   onToggleGroup,
   onAction,
   dnd,
+  hoverApi,
   openMove,
   openRename,
   level = 0,
@@ -898,11 +1272,21 @@ function GroupNode({
       }),
       jsx('span', { className: 'min-w-0 truncate', children: group.name }),
       jsx(GroupTrend, { group, t }),
-      jsx('span', {
-        className:
-          'ml-auto shrink-0 text-[0.6875rem] font-normal text-(--ui-text-quaternary)',
-        children: String(group.count ?? group.stocks.length),
-      }),
+      !childGroups.length
+        ? (() => {
+            const avg = groupAvgPercent(group);
+            return avg === null
+              ? null
+              : jsx('span', {
+                  className: cn(
+                    'ml-auto shrink-0 text-[0.6875rem] font-normal tabular-nums',
+                    trendClass(avg)
+                  ),
+                  style: trendStyle(avg),
+                  children: `${avg > 0 ? '+' : ''}${avg.toFixed(2)}%`,
+                });
+          })()
+        : null,
     ],
   });
 
@@ -958,6 +1342,8 @@ function GroupNode({
                           t,
                           onAction,
                           openMove,
+                          onHoverEnter: hoverApi.onEnter,
+                          onHoverLeave: hoverApi.onLeave,
                         },
                         `${category}-${group.id}-${stock.code}`
                       )
@@ -978,6 +1364,7 @@ function GroupNode({
                           onToggleGroup,
                           onAction,
                           dnd,
+                          hoverApi,
                           openMove,
                           openRename,
                           level: level + 1,
@@ -1006,6 +1393,7 @@ function MarketNode({
   onToggleGroup,
   onAction,
   dnd,
+  hoverApi,
   openMove,
   openCreateGroup,
   openRename,
@@ -1062,6 +1450,7 @@ function MarketNode({
                   onToggleGroup,
                   onAction,
                   dnd,
+                  hoverApi,
                   openMove,
                   openRename,
                   level: 0,
@@ -1075,22 +1464,58 @@ function MarketNode({
   });
 }
 
-function StockPane({ api }) {
+function StockPane({ api, storage }) {
   const t = usePluginI18n(ID);
   const snapshot = useSnapshot(api);
   const action = usePluginAction(api);
   const [dialog, setDialog] = useState(null);
   const [moveDialog, setMoveDialog] = useState(null);
   const [stockSearchOpen, setStockSearchOpen] = useState(false);
-  const [marketState, setMarketState] = useState({ A: true });
-  const [groupState, setGroupState] = useState({});
+  const [marketState, setMarketState] = useState(() =>
+    storage.get('stockTree.marketState', { A: true })
+  );
+  const [groupState, setGroupState] = useState(() =>
+    storage.get('stockTree.groupState', {})
+  );
+  const [hover, setHover] = useState(null);
+  const minuteQuery = useQuery({
+    queryKey: [ID, 'minute', hover?.code || ''],
+    queryFn: () => api.minuteStock(hover.code),
+    enabled: Boolean(hover?.code),
+    staleTime: 60000,
+    retry: 1,
+  });
+  const hoverApi = {
+    onEnter: (code, name, position) =>
+      setHover({ code, name, x: position.x, y: position.y }),
+    onLeave: () => setHover(null),
+  };
 
   const onAction = (next) => action.mutate(next);
   const dnd = useTreeDrag(onAction);
   const toggleMarket = (id) =>
-    setMarketState((current) => ({ ...current, [id]: !current[id] }));
+    setMarketState((current) => {
+      const next = { ...current, [id]: !current[id] };
+      storage.set('stockTree.marketState', next);
+      return next;
+    });
   const toggleGroup = (id) =>
-    setGroupState((current) => ({ ...current, [id]: !current[id] }));
+    setGroupState((current) => {
+      const next = { ...current, [id]: !current[id] };
+      storage.set('stockTree.groupState', next);
+      return next;
+    });
+  const collapseAll = () => {
+    const nextMarket = {};
+    const nextGroup = {};
+    (data?.categories || []).forEach((category) => {
+      nextMarket[category.id] = false;
+    });
+    storage.set('stockTree.marketState', nextMarket);
+    storage.set('stockTree.groupState', nextGroup);
+    setMarketState(nextMarket);
+    setGroupState(nextGroup);
+  };
 
   const addStock = (stock) =>
     onAction({
@@ -1102,7 +1527,7 @@ function StockPane({ api }) {
     onAction({
       run: (currentApi) => currentApi.moveStock(stock.code, groupId),
       success:
-        groupId === 'ungrouped' ? t('movedUngrouped') : t('movedTo', groupName),
+        groupId === 'watch' ? t('watchAdded') : t('movedTo', groupName),
     });
 
   const openCreateGroup = (category) =>
@@ -1184,6 +1609,18 @@ function StockPane({ api }) {
                 children: 'LeekFund',
               }),
               jsx(Tip, {
+                label: t('collapseAll'),
+                children: jsx(Button, {
+                  variant: 'ghost',
+                  size: 'icon-xs',
+                  onClick: collapseAll,
+                  children: jsx(Codicon, {
+                    name: 'collapse-all',
+                    size: '0.8rem',
+                  }),
+                }),
+              }),
+              jsx(Tip, {
                 label: t('addStock'),
                 children: jsx(Button, {
                   variant: 'ghost',
@@ -1217,6 +1654,7 @@ function StockPane({ api }) {
             : null,
           jsx(ScrollArea, {
             className: 'min-h-0 flex-1',
+            onWheel: () => setHover(null),
             children: data.categories.map((category) =>
               jsx(
                 MarketNode,
@@ -1229,6 +1667,7 @@ function StockPane({ api }) {
                   onToggleGroup: toggleGroup,
                   onAction,
                   dnd,
+                  hoverApi,
                   openMove: (stock, groups) => setMoveDialog({ stock, groups }),
                   openCreateGroup,
                   openRename,
@@ -1266,6 +1705,316 @@ function StockPane({ api }) {
         onMove: moveStock,
         onClose: () => setMoveDialog(null),
       }),
+      jsx(StockMinuteCard, {
+        hover,
+        data: minuteQuery.data,
+        isLoading: minuteQuery.isLoading,
+        isError: minuteQuery.isError,
+      }),
+    ],
+  });
+}
+
+const RANKING_TABS = [
+  { id: 'speed', label: 'speedRanking' },
+  { id: 'up', label: 'upRanking' },
+  { id: 'down', label: 'downRanking' },
+  { id: 'strategy', label: 'strategy' },
+];
+
+function SpeedRankingPane({ api }) {
+  const t = usePluginI18n(ID);
+  const [tab, setTab] = useState('speed');
+  const isStrategy = tab === 'strategy';
+  const ranking = useRanking(api, isStrategy ? null : tab);
+  const strategies = useStrategies(api, isStrategy);
+  const action = usePluginAction(api);
+  const [hover, setHover] = useState(null);
+  const hoverTimer = useRef(null);
+  const hoverPosition = useRef({ x: 0, y: 0 });
+  const minuteQuery = useQuery({
+    queryKey: [ID, 'minute', hover?.code || ''],
+    queryFn: () => api.minuteStock(hover.code),
+    enabled: Boolean(hover?.code),
+    staleTime: 60000,
+    retry: 1,
+  });
+
+  const fullCode = (code) => {
+    if (code.startsWith('6')) return `sh${code}`;
+    if (code.startsWith('0') || code.startsWith('3')) return `sz${code}`;
+    return code;
+  };
+  const onAdd = (item) =>
+    action.mutate({
+      run: (currentApi) => currentApi.addStock(fullCode(item.code)),
+      success: t('stockAdded'),
+    });
+  const groupLabel = (item) =>
+    item.group_id === 'watch'
+      ? t('watch')
+      : item.group_id === 'holding'
+      ? t('holding')
+      : item.group_name || '';
+  const onRowEnter = (event, item) => {
+    hoverPosition.current = { x: event.clientX, y: event.clientY };
+    window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = window.setTimeout(() => {
+      setHover({
+        code: fullCode(item.code),
+        name: item.name,
+        x: hoverPosition.current.x,
+        y: hoverPosition.current.y,
+      });
+    }, 300);
+  };
+  const onRowLeave = () => {
+    window.clearTimeout(hoverTimer.current);
+    setHover(null);
+  };
+  const renderStockRow = (item, index) => {
+    if (!item) return null;
+    const quoteClass = trendClass(item.percent);
+    const quoteStyle = trendStyle(item.percent);
+    return jsxs(
+      'div',
+      {
+        className:
+          'flex items-center gap-2 border-b border-(--ui-stroke-tertiary) px-2 py-1.5',
+        onMouseEnter: (event) => onRowEnter(event, item),
+        onMouseLeave: onRowLeave,
+        children: [
+          jsx('span', {
+            className:
+              'w-5 shrink-0 text-center text-[0.6875rem] tabular-nums text-(--ui-text-quaternary)',
+            children: index + 1,
+          }),
+          jsxs('span', {
+            className: 'min-w-0 flex-1',
+            children: [
+              jsx('span', {
+                className:
+                  'block truncate text-(--ui-text-primary)',
+                children: item.name,
+              }),
+              jsx('span', {
+                className:
+                  'block text-[0.6875rem] text-(--ui-text-quaternary)',
+                children: item.code,
+              }),
+            ],
+          }),
+          jsxs('span', {
+            className: 'shrink-0 text-right tabular-nums',
+            style: quoteStyle,
+            children: [
+              jsx('span', {
+                className: cn('block', quoteClass),
+                children: item.price,
+              }),
+              jsx('span', {
+                className: cn(
+                  'block text-[0.6875rem]',
+                  quoteClass
+                ),
+                children: `${item.percent}%`,
+              }),
+            ],
+          }),
+          item.added
+            ? jsx('span', {
+                className:
+                  'shrink-0 text-[0.6875rem] text-(--ui-text-quaternary)',
+                children: groupLabel(item),
+              })
+            : jsx(Tip, {
+                label: t('addStock'),
+                children: jsx(Button, {
+                  variant: 'ghost',
+                  size: 'icon-xs',
+                  onClick: () => onAdd(item),
+                  children: jsx(Codicon, {
+                    name: 'add',
+                    size: '0.75rem',
+                  }),
+                }),
+              }),
+        ],
+      },
+      `${index}-${item.code}`
+    );
+  };
+  const renderStrategyList = () => {
+    const groups = strategies.data?.groups || [];
+    if (!groups.length) {
+      return jsx('div', {
+        className: 'px-3 py-6 text-center text-(--ui-text-quaternary)',
+        children: t('strategyEmpty'),
+      });
+    }
+    return jsxs(Fragment, {
+      children: groups.map((group) => {
+        const items = Array.isArray(group.items) ? group.items : [];
+        return jsxs(
+          'div',
+          {
+            className: 'py-1',
+            children: [
+              jsx('div', {
+                className:
+                  'bg-(--ui-bg-elevated) px-2 py-1 text-[0.6875rem] font-semibold text-(--ui-text-secondary)',
+                children: group.name,
+              }),
+              items.length
+                ? items.map((item, index) => renderStockRow(item, index))
+                : jsx('div', {
+                    className:
+                      'px-3 py-2 text-[0.6875rem] text-(--ui-text-quaternary)',
+                    children: t('strategyEmpty'),
+                  }),
+            ],
+          },
+          group.id
+        );
+      }),
+    });
+  };
+
+  const activeLoading = isStrategy
+    ? strategies.isLoading && !strategies.data
+    : ranking.isLoading && !ranking.data;
+  const activeError = isStrategy
+    ? strategies.isError && !strategies.data
+    : ranking.isError && !ranking.data;
+  const activeFetching = isStrategy
+    ? strategies.isFetching
+    : ranking.isFetching;
+
+  if (activeLoading) {
+    return jsxs('div', {
+      className: 'flex h-full flex-col gap-2 p-3',
+      children: [
+        jsx(Skeleton, { className: 'h-7 w-full' }),
+        jsx(Skeleton, { className: 'h-10 w-full' }),
+        jsx(Skeleton, { className: 'h-10 w-full' }),
+        jsx(Skeleton, { className: 'h-10 w-full' }),
+      ],
+    });
+  }
+
+  if (activeError) {
+    return jsxs('div', {
+      className:
+        'flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-xs',
+      children: [
+        jsx(Codicon, {
+          className: 'text-(--ui-text-tertiary)',
+          name: 'warning',
+          size: '1.25rem',
+        }),
+        jsx('div', {
+          className: 'text-(--ui-text-secondary)',
+          children: t('speedRankingUnavailable'),
+        }),
+        jsx(Button, {
+          variant: 'outline',
+          size: 'xs',
+          onClick: () =>
+            isStrategy ? strategies.refetch() : ranking.refetch(),
+          children: t('retry'),
+        }),
+      ],
+    });
+  }
+
+  const data = ranking.data || { items: [] };
+
+  return jsxs('div', {
+    className: 'flex h-full min-h-0 flex-col text-xs',
+    children: [
+      jsxs('div', {
+        className:
+          'flex shrink-0 items-center gap-2 border-b border-(--ui-stroke-secondary) px-2 py-1',
+        children: [
+          jsx('div', {
+            className:
+              'min-w-0 flex-1 truncate font-semibold text-(--ui-text-primary)',
+            children: t('rankingTitle'),
+          }),
+          jsx(Tip, {
+            label: t('refresh'),
+            children: jsx(Button, {
+              variant: 'ghost',
+              size: 'icon-xs',
+              disabled: activeFetching,
+              onClick: () =>
+                isStrategy ? strategies.refetch() : ranking.refetch(),
+              children: jsx(Codicon, {
+                name: 'refresh',
+                size: '0.8rem',
+                spinning: activeFetching,
+              }),
+            }),
+          }),
+        ],
+      }),
+      jsxs('div', {
+        className:
+          'flex shrink-0 items-center gap-1 border-b border-(--ui-stroke-tertiary) px-2 py-1',
+        children: RANKING_TABS.map((item) =>
+          jsx(
+            'button',
+            {
+              type: 'button',
+              className: cn(
+                'rounded px-2 py-0.5 text-[0.6875rem]',
+                tab === item.id
+                  ? 'bg-(--ui-control-active-background) text-(--ui-text-primary)'
+                  : 'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover)'
+              ),
+              onClick: () => setTab(item.id),
+              children: t(item.label),
+            },
+            item.id
+          )
+        ),
+      }),
+      activeError
+        ? jsx('div', {
+            className:
+              'shrink-0 border-b border-(--ui-stroke-tertiary) px-2 py-1 text-[0.6875rem] text-(--ui-text-tertiary)',
+            children: t('speedRankingStale'),
+          })
+        : null,
+      jsx(ScrollArea, {
+        className: 'min-h-0 flex-1',
+        onWheel: () => setHover(null),
+        children: isStrategy
+          ? renderStrategyList()
+          : data.items.length
+          ? data.items.map((item, index) => renderStockRow(item, index))
+          : jsx('div', {
+              className:
+                'px-3 py-6 text-center text-(--ui-text-quaternary)',
+              children: t('speedRankingEmpty'),
+            }),
+      }),
+      jsx('div', {
+        className:
+          'shrink-0 border-t border-(--ui-stroke-tertiary) px-2 py-1 text-[0.625rem] text-(--ui-text-quaternary)',
+        children: data.updated_at
+          ? t(
+              'updatedAt',
+              new Date(data.updated_at * 1000).toLocaleTimeString()
+            )
+          : t('notUpdated'),
+      }),
+      jsx(StockMinuteCard, {
+        hover,
+        data: minuteQuery.data,
+        isLoading: minuteQuery.isLoading,
+        isError: minuteQuery.isError,
+      }),
     ],
   });
 }
@@ -1273,6 +2022,16 @@ function StockPane({ api }) {
 function StatusTicker({ api }) {
   const t = usePluginI18n(ID);
   const snapshot = useSnapshot(api);
+  const [hover, setHover] = useState(null);
+  const hoverTimer = useRef(null);
+  const hoverPosition = useRef({ x: 0, y: 0 });
+  const minuteQuery = useQuery({
+    queryKey: [ID, 'minute', hover?.code || ''],
+    queryFn: () => api.minuteStock(hover.code),
+    enabled: Boolean(hover?.code),
+    staleTime: 60000,
+    retry: 1,
+  });
   const items = snapshot.data?.status_bar || [];
   if (!items.length) {
     return jsx('span', {
@@ -1285,28 +2044,55 @@ function StatusTicker({ api }) {
   return jsx('div', {
     className:
       'inline-flex h-full items-center overflow-hidden whitespace-nowrap',
-    children: items.map((item) => {
-      const percent = item.percent === '--' ? '--' : `${item.percent}%`;
-      const label = `${item.name} ${item.price} ${percent}`;
-      return jsx(
-        Tip,
-        {
-          label: `${item.name} (${item.code}) · ${
-            item.time || t('latestQuote')
-          }`,
-          children: jsx('span', {
-            className: cn(
-              'inline-flex h-full items-center border-l border-(--ui-stroke-tertiary)',
-              'px-1.5 text-[0.6875rem] tabular-nums',
-              trendClass(item.percent)
-            ),
-            style: trendStyle(item.percent),
-            children: label,
-          }),
-        },
-        item.code
-      );
-    }),
+    children: [
+      ...items.map((item) => {
+        if (!item) return null;
+        const percent = item.percent === '--' ? '--' : `${item.percent}%`;
+        const label = `${item.name} ${item.price} ${percent}`;
+        const canShowMinute = /^(sh|sz)/.test(String(item.code || ''));
+        return jsx(
+          Tip,
+          {
+            label: `${item.name} (${item.code}) · ${
+              item.time || t('latestQuote')
+            }`,
+            children: jsx('span', {
+              className: cn(
+                'inline-flex h-full items-center border-l border-(--ui-stroke-tertiary)',
+                'px-1.5 text-[0.6875rem] tabular-nums',
+                trendClass(item.percent)
+              ),
+              style: trendStyle(item.percent),
+              onMouseEnter: (event) => {
+                if (!canShowMinute) return;
+                hoverPosition.current = { x: event.clientX, y: event.clientY };
+                window.clearTimeout(hoverTimer.current);
+                hoverTimer.current = window.setTimeout(() => {
+                  setHover({
+                    code: item.code,
+                    name: item.name,
+                    x: hoverPosition.current.x,
+                    y: hoverPosition.current.y,
+                  });
+                }, 300);
+              },
+              onMouseLeave: () => {
+                window.clearTimeout(hoverTimer.current);
+                setHover(null);
+              },
+              children: label,
+            }),
+          },
+          item.code
+        );
+      }),
+      jsx(StockMinuteCard, {
+        hover,
+        data: minuteQuery.data,
+        isLoading: minuteQuery.isLoading,
+        isError: minuteQuery.isError,
+      }),
+    ],
   });
 }
 
@@ -1318,11 +2104,21 @@ export default {
     ctx.i18n.register({
       en: {
         addStock: 'Add stock',
+        collapseAll: 'Collapse all',
         stockSearchPlaceholder: 'Stock code or name',
         stockSearchHint: 'Search A-shares by code or name',
         stockSearching: 'Searching…',
         stockSearchEmpty: 'No matching A-shares',
         stockSearchFailed: 'Stock search failed. Try again.',
+        speedRanking: 'Speed ranking',
+        upRanking: 'Gainers',
+        downRanking: 'Losers',
+        strategy: 'Strategies',
+        strategyEmpty: 'No strategy results yet',
+        rankingTitle: 'Market ranking',
+        speedRankingEmpty: 'No speed ranking data',
+        speedRankingUnavailable: 'Speed ranking is unavailable. Try again.',
+        speedRankingStale: 'Refresh failed. Showing the last successful ranking.',
         cancel: 'Cancel',
         create: 'Create',
         save: 'Save',
@@ -1345,7 +2141,9 @@ export default {
         removeTicker: 'Remove from status bar',
         moveStock: 'Move to…',
         moveStockTitle: (name) => `Move “${name}”`,
-        ungrouped: 'Ungrouped',
+        watch: 'Watch',
+        holding: 'Holding',
+        added: 'Added',
         groupTrendSummary: (up, down, flat) =>
           `${up} up, ${down} down, ${flat} unchanged`,
         emptyGroup: 'No stocks',
@@ -1364,20 +2162,29 @@ export default {
         groupDeleted: 'Group deleted; stocks were kept',
         holdingAdded: 'Holding mark added',
         holdingRemoved: 'Holding mark removed',
-        watchAdded: 'Watch mark added',
-        watchRemoved: 'Watch mark removed',
+        watchAdded: 'Added to watch',
+        watchRemoved: 'Removed from watch',
         tickerAdded: 'Added to status bar',
         tickerRemoved: 'Removed from status bar',
-        movedUngrouped: 'Moved to ungrouped',
         movedTo: (name) => `Moved to ${name}`,
       },
       zh: {
         addStock: '添加股票',
+        collapseAll: '全部折叠',
         stockSearchPlaceholder: '输入股票代码或名称',
         stockSearchHint: '支持按代码或中文名称查询 A 股',
         stockSearching: '正在查询…',
         stockSearchEmpty: '没有匹配的 A 股',
         stockSearchFailed: '股票查询失败，请重试',
+        speedRanking: '涨速榜',
+        upRanking: '涨幅榜',
+        downRanking: '跌幅榜',
+        strategy: '策略选股',
+        strategyEmpty: '暂无策略结果',
+        rankingTitle: '行情排行',
+        speedRankingEmpty: '暂无涨速榜数据',
+        speedRankingUnavailable: '涨速榜暂不可用，请重试',
+        speedRankingStale: '刷新失败，正在展示上一次成功榜单',
         cancel: '取消',
         create: '创建',
         save: '保存',
@@ -1400,7 +2207,9 @@ export default {
         removeTicker: '移出状态栏',
         moveStock: '移动到…',
         moveStockTitle: (name) => `移动“${name}”`,
-        ungrouped: '未分组',
+        watch: '关注',
+        holding: '持仓',
+        added: '已添加',
         groupTrendSummary: (up, down, flat) =>
           `上涨 ${up}，下跌 ${down}，平盘 ${flat}`,
         emptyGroup: '暂无股票',
@@ -1419,11 +2228,10 @@ export default {
         groupDeleted: '分组已删除，组内股票已保留',
         holdingAdded: '已添加持仓标记',
         holdingRemoved: '已取消持仓标记',
-        watchAdded: '已添加关注',
+        watchAdded: '已添加到关注',
         watchRemoved: '已取消关注',
         tickerAdded: '已加入状态栏',
         tickerRemoved: '已移出状态栏',
-        movedUngrouped: '已移动到未分组',
         movedTo: (name) => `已移动到 ${name}`,
       },
     });
@@ -1438,7 +2246,20 @@ export default {
         dock: { pane: 'workspace', pos: 'left' },
         width: '300px',
       },
-      render: () => jsx(StockPane, { api }),
+      render: () => jsx(StockPane, { api, storage: ctx.storage }),
+    });
+    ctx.register({
+      id: 'speed-ranking-sidebar',
+      area: 'panes',
+      title: '行情排行',
+      data: {
+        placement: 'left',
+        dock: { pane: 'stock-tree-sidebar', pos: 'bottom' },
+        width: '300px',
+        height: '40vh',
+        minHeight: '12rem',
+      },
+      render: () => jsx(SpeedRankingPane, { api }),
     });
     ctx.register({
       id: 'status-ticker',

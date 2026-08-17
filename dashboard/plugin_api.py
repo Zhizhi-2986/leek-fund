@@ -74,13 +74,37 @@ TENCENT_STOCK_SEARCH_URL = (
 BUILTIN_GROUPS = [
     ("holding", "持仓股"),
     ("watch", "关注"),
-    ("ungrouped", "未分组"),
 ]
 CODE_PATTERN = re.compile(
     r"^(?:(?:sh|sz|bj)\d{6}|hk\d{5}|(?:usr_|gb_)[a-z0-9._-]+)$",
     re.IGNORECASE,
 )
 SINA_LINE_PATTERN = re.compile(r'^var hq_str_([^=]+)="([^"]*)";?$', re.MULTILINE)
+TENCENT_MINUTE_URL = "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
+TENCENT_QUOTE_URL = "https://qt.gtimg.cn/q={code}"
+TENCENT_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+TENCENT_RANKING_URL = (
+    "https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList"
+)
+EASTMONEY_SPEED_RANKING_URL = "http://push2.eastmoney.com/api/qt/clist/get"
+EASTMONEY_SPEED_RANKING_FALLBACK_URL = (
+    "http://push2delay.eastmoney.com/api/qt/clist/get"
+)
+EASTMONEY_A_SHARE_FILTER = (
+    "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+)
+SPEED_RANKING_LIMIT = 20
+SPEED_RANKING_CACHE_TTL_SECONDS = 2
+RANKING_TYPES = {
+    "speed": {"fid": "f22", "po": 1},
+    "up": {"fid": "f3", "po": 1},
+    "down": {"fid": "f3", "po": 0},
+}
+MINUTE_CACHE_TTL_SECONDS = 60
+MINUTE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+MINUTE_CACHE_LOCK = threading.RLock()
+SPEED_RANKING_CACHE: Dict[str, Any] = {}
+SPEED_RANKING_CACHE_LOCK = threading.RLock()
 STATE_LOCK = threading.RLock()
 SNAPSHOT_LOCK = threading.RLock()
 
@@ -202,7 +226,9 @@ def normalize_state(raw: Any) -> Dict[str, Any]:
     source = raw if isinstance(raw, dict) else {}
     stocks = _dedupe(
         code
-        for code in (normalize_code(item) for item in source.get("stocks", DEFAULT_STOCKS))
+        for code in (
+            normalize_code(item) for item in source.get("stocks", DEFAULT_STOCKS)
+        )
         if code
     )
     stock_set = set(stocks)
@@ -215,7 +241,7 @@ def normalize_state(raw: Any) -> Dict[str, Any]:
             if code and code in stock_set
         )
 
-    return {
+    normalized = {
         "schema_version": STATE_VERSION,
         "stocks": stocks,
         "groups": groups,
@@ -223,6 +249,17 @@ def normalize_state(raw: Any) -> Dict[str, Any]:
         "watch_codes": normalize_stock_subset("watch_codes"),
         "status_bar_stock_codes": normalize_stock_subset("status_bar_stock_codes"),
     }
+    covered = {code for group in groups for code in group["stock_codes"]}
+    covered.update(normalized["holding_codes"])
+    covered.update(normalized["watch_codes"])
+    orphans = [
+        code
+        for code in stocks
+        if code not in covered and category_of(code) == "A"
+    ]
+    if orphans:
+        normalized["watch_codes"] = _dedupe(normalized["watch_codes"] + orphans)
+    return normalized
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -405,7 +442,9 @@ def _parse_sina_global_index(code: str, params: List[str]) -> Optional[Dict[str,
         open_price=params[8] or price,
         high=params[10] or price,
         low=params[11] or price,
-        time_text=" ".join(item for item in [params[6], params[7] or params[5]] if item),
+        time_text=" ".join(
+            item for item in [params[6], params[7] or params[5]] if item
+        ),
     )
 
 
@@ -496,6 +535,565 @@ def search_a_stocks(keyword: str) -> List[Dict[str, str]]:
     return parse_tencent_stock_search(payload)
 
 
+def _format_minute_time(value: str) -> str:
+    text = str(value or "").strip()
+    if len(text) == 4 and text.isdigit():
+        return f"{text[:2]}:{text[2:]}"
+    return text
+
+
+def _tencent_minute_points(code: str) -> List[Dict[str, Any]]:
+    """请求腾讯分钟接口，返回当日分时点列表。
+
+    每行格式：``HHmm 价格 累计成交量(手) 累计成交额(元)``。
+    """
+    url = f"{TENCENT_MINUTE_URL}?code={code}"
+    payload = json.loads(_http_get(url).decode("utf-8", errors="replace"))
+    stock = payload.get("data", {}).get(code)
+    inner = stock.get("data", {}) if isinstance(stock, dict) else {}
+    rows = inner.get("data", []) if isinstance(inner, dict) else []
+    points: List[Dict[str, Any]] = []
+    for row in rows:
+        parts = str(row or "").split()
+        if len(parts) < 3:
+            continue
+        price = _number(parts[1])
+        if price <= 0:
+            continue
+        points.append(
+            {
+                "time": _format_minute_time(parts[0]),
+                "price": price,
+                "volume": int(_number(parts[2])),
+                "amount": _number(parts[3]) if len(parts) > 3 else 0.0,
+            }
+        )
+    return points
+
+
+def _tencent_quote_detail(code: str) -> Optional[Dict[str, str]]:
+    """请求腾讯实时行情，返回名称、现价、昨收等文本字段。"""
+    raw = _http_get(TENCENT_QUOTE_URL.format(code=code))
+    text = raw.decode("gbk", errors="replace")
+    marker = f"v_{code}="
+    if marker not in text:
+        return None
+    fields = text.split(marker, 1)[1].split("~")
+    if len(fields) <= 34 or not fields[1]:
+        return None
+    return {
+        "name": str(fields[1] or "").strip(),
+        "code": code,
+        "price": str(fields[3] or "").strip(),
+        "pre_close": str(fields[4] or "").strip(),
+        "open": str(fields[5] or "").strip(),
+        "high": str(fields[33] or "").strip(),
+        "low": str(fields[34] or "").strip(),
+        "limit_up": str(fields[47] or "").strip(),
+        "limit_down": str(fields[48] or "").strip(),
+    }
+
+
+def _avg_price(point: Dict[str, Any]) -> Optional[float]:
+    """根据累计成交量(手)与累计成交额(元)计算分时均价，1 手 = 100 股。"""
+    volume = _number(point.get("volume"))
+    amount = _number(point.get("amount"))
+    if volume <= 0 or amount <= 0:
+        return None
+    return amount / (volume * 100)
+
+
+KLINE_CACHE: Dict[str, Tuple[float, List[Any]]] = {}
+KLINE_CACHE_LOCK = threading.RLock()
+KLINE_CACHE_TTL_SECONDS = 60
+STRATEGY_CACHE_TTL_SECONDS = 10
+
+
+def _tencent_daily_kline(code: str, days: int = 60) -> List[Any]:
+    """请求腾讯前复权日 K 线，返回每行 [日期, 开, 收, 高, 低, 量]。"""
+    url = f"{TENCENT_KLINE_URL}?{urllib_parse.urlencode({'param': f'{code},day,,,{days},qfq'})}"
+    payload = json.loads(_http_get(url).decode("utf-8", errors="replace"))
+    stock = payload.get("data", {}).get(code, {})
+    rows = stock.get("qfqday") or stock.get("day") or []
+    result: List[Any] = []
+    for row in rows:
+        if isinstance(row, (list, tuple)) and len(row) >= 6:
+            result.append(row)
+    return result
+
+
+def _tencent_daily_kline_cached(code: str) -> List[Any]:
+    with KLINE_CACHE_LOCK:
+        cached = KLINE_CACHE.get(code)
+        if cached and time.time() - cached[0] < KLINE_CACHE_TTL_SECONDS:
+            return cached[1]
+    rows = _tencent_daily_kline(code)
+    with KLINE_CACHE_LOCK:
+        KLINE_CACHE[code] = (time.time(), rows)
+    return rows
+
+
+def _tencent_daily_closes(code: str) -> List[float]:
+    """请求腾讯前复权日 K 线，返回最近 20 个交易日收盘价列表。"""
+    return [float(row[2]) for row in _tencent_daily_kline(code, 20)]
+
+
+def _moving_average(closes: List[float], window: int) -> float:
+    valid = [value for value in closes if value > 0]
+    if len(valid) < window:
+        return 0.0
+    return round(sum(valid[-window:]) / window, 3)
+
+
+def _sma(values: List[float], window: int) -> Optional[float]:
+    if len(values) < window:
+        return None
+    return sum(values[-window:]) / window
+
+
+def _ema(values: List[float], window: int) -> List[float]:
+    if not values:
+        return []
+    k = 2 / (window + 1)
+    result = [float(values[0])]
+    for value in values[1:]:
+        result.append(float(value) * k + result[-1] * (1 - k))
+    return result
+
+
+def _macd_golden_cross(rows: List[Any], closes: List[float]) -> bool:
+    """MACD DIF 上穿 DEA（金叉）。"""
+    if len(closes) < 35:
+        return False
+    ema12 = _ema(closes, 12)
+    ema26 = _ema(closes, 26)
+    dif = [a - b for a, b in zip(ema12, ema26)]
+    dea = _ema(dif, 9)
+    return dif[-1] > dea[-1] and dif[-2] <= dea[-2]
+
+
+def _ma_bullish(rows: List[Any], closes: List[float]) -> bool:
+    """均线多头排列：MA5 > MA10 > MA20 > MA60 且价格站上 MA5。"""
+    if len(closes) < 60:
+        return False
+    ma5 = _sma(closes, 5)
+    ma10 = _sma(closes, 10)
+    ma20 = _sma(closes, 20)
+    ma60 = _sma(closes, 60)
+    if None in (ma5, ma10, ma20, ma60):
+        return False
+    return ma5 > ma10 > ma20 > ma60 and closes[-1] > ma5
+
+
+def _breakout(rows: List[Any], closes: List[float]) -> bool:
+    """放量突破新高：创 60 日新高且放量且收阳。"""
+    if len(rows) < 60:
+        return False
+    highs = [float(row[3]) for row in rows]
+    closes = [float(row[2]) for row in rows]
+    volumes = [float(row[5]) for row in rows]
+    if highs[-1] <= max(highs[:-1]):
+        return False
+    prev5 = volumes[-6:-1]
+    if not prev5 or sum(prev5) <= 0:
+        return False
+    avg = sum(prev5) / len(prev5)
+    return volumes[-1] > avg * 1.2 and closes[-1] > closes[-2]
+
+
+def get_a_minute_line(code: str) -> Dict[str, Any]:
+    normalized = normalize_code(code)
+    if not normalized or category_of(normalized) != "A":
+        raise HTTPException(status_code=400, detail="仅支持 A 股分时走势。")
+    with MINUTE_CACHE_LOCK:
+        cached = MINUTE_CACHE.get(normalized)
+        if cached and time.time() - cached[0] < MINUTE_CACHE_TTL_SECONDS:
+            return cached[1]
+
+    points = _tencent_minute_points(normalized)
+    quote = _tencent_quote_detail(normalized)
+    pre_close = _number(quote["pre_close"]) if quote else 0.0
+    for point in points:
+        point["percent_change"] = (
+            (point["price"] - pre_close) / pre_close * 100 if pre_close else 0.0
+        )
+        point["avg_price"] = _avg_price(point)
+    result = {
+        "code": normalized,
+        "name": quote["name"] if quote else normalized,
+        "pre_close": pre_close,
+        "price": _number(quote["price"]) if quote else 0.0,
+        "high": quote["high"] if quote else "",
+        "low": quote["low"] if quote else "",
+        "limit_up": _number(quote["limit_up"]) if quote else 0.0,
+        "limit_down": _number(quote["limit_down"]) if quote else 0.0,
+        "points": points,
+    }
+    closes: List[float] = []
+    try:
+        closes = _tencent_daily_closes(normalized)
+    except Exception:
+        closes = []
+    result["ma5"] = _moving_average(closes, 5)
+    result["ma10"] = _moving_average(closes, 10)
+    result["ma20"] = _moving_average(closes, 20)
+    with MINUTE_CACHE_LOCK:
+        MINUTE_CACHE[normalized] = (time.time(), result)
+    return result
+
+
+def _eastmoney_a_share_code(value: Any) -> str:
+    code = str(value or "").strip()
+    if not re.fullmatch(r"\d{6}", code):
+        return ""
+    if code.startswith("6"):
+        return f"sh{code}"
+    if code.startswith(("0", "3")):
+        return f"sz{code}"
+    return ""
+
+
+def _ranking_sort_key(rank_type: str) -> Tuple[str, bool]:
+    if rank_type == "speed":
+        return "speed", True
+    reverse = rank_type == "up"
+    return "percent", reverse
+
+
+def parse_speed_ranking(
+    payload: Any,
+    limit: int = SPEED_RANKING_LIMIT,
+    rank_type: str = "speed",
+) -> List[Dict[str, Any]]:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    rows = data.get("diff") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("榜单数据格式不正确。")
+
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        market_code = _eastmoney_a_share_code(row.get("f12"))
+        name = str(row.get("f14") or "").strip()
+        price = _number(row.get("f2"), float("nan"))
+        percent = _number(row.get("f3"), float("nan"))
+        speed = _number(row.get("f22"), float("nan"))
+        if (
+            not market_code
+            or not name
+            or "ST" in name.upper()
+            or price != price
+            or percent != percent
+            or speed != speed
+            or price <= 0
+        ):
+            continue
+        items.append(
+            {
+                "code": market_code[2:],
+                "name": name,
+                "price": _display_price(market_code, name, price),
+                "percent": f"{percent:+.2f}",
+                "speed": speed,
+            }
+        )
+
+    sort_key, reverse = _ranking_sort_key(rank_type)
+    items.sort(
+        key=lambda item: item[sort_key] if sort_key == "speed" else _number(item["percent"]),
+        reverse=reverse,
+    )
+    return items[: max(0, limit)]
+
+
+def fetch_tencent_ranking(
+    sort_type: str = "speed",
+    limit: int = SPEED_RANKING_LIMIT,
+) -> List[Dict[str, Any]]:
+    """通过腾讯行情排行接口按指定指标获取 A 股榜单。"""
+    query = urllib_parse.urlencode(
+        {
+            "board_code": "aStock",
+            "sort_type": sort_type,
+            "direct": "down",
+            "offset": 0,
+            "count": limit,
+        }
+    )
+    raw = _http_get(f"{TENCENT_RANKING_URL}?{query}")
+    payload = json.loads(raw.decode("utf-8", errors="replace"))
+    rows = payload.get("data", {}).get("rank_list", [])
+    if not isinstance(rows, list):
+        raise ValueError("榜单数据格式不正确。")
+
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        code = normalize_code(row.get("code"))
+        name = str(row.get("name") or "").strip()
+        price = _number(row.get("zxj"), float("nan"))
+        percent = _number(row.get("zdf"), float("nan"))
+        speed = _number(row.get("speed"), float("nan"))
+        if (
+            not code
+            or not code.startswith(("sh", "sz"))
+            or not name
+            or "ST" in name.upper()
+            or price != price
+            or percent != percent
+            or speed != speed
+            or price <= 0
+        ):
+            continue
+        item: Dict[str, Any] = {
+            "code": code[2:],
+            "name": name,
+            "price": _display_price(code, name, price),
+            "percent": f"{percent:+.2f}",
+            "speed": speed,
+        }
+        hsl = _number(row.get("hsl"), float("nan"))
+        if hsl == hsl and hsl > 0:
+            item["hsl"] = round(hsl, 2)
+        items.append(item)
+    return items[: max(0, limit)]
+
+
+def fetch_tencent_speed_ranking(
+    limit: int = SPEED_RANKING_LIMIT,
+) -> List[Dict[str, Any]]:
+    return fetch_tencent_ranking("speed", limit)
+
+
+def _strategy_candidates(limit: int = 50) -> List[Dict[str, Any]]:
+    """合并新浪涨幅榜与腾讯成交量榜作为策略候选池，按代码去重。"""
+    combined: Dict[str, Dict[str, Any]] = {}
+    try:
+        for item in fetch_sina_ranking("up", 30):
+            combined[item["code"]] = item
+    except Exception:
+        pass
+    try:
+        for item in fetch_tencent_ranking("volume", 30):
+            combined.setdefault(item["code"], item)
+    except Exception:
+        pass
+    return list(combined.values())[: max(0, limit)]
+
+
+def _apply_strategy(
+    candidates: List[Dict[str, Any]],
+    matcher: Callable[[List[Any], List[float]], bool],
+    limit: int = 8,
+) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        full_code = _eastmoney_a_share_code(candidate["code"])
+        if not full_code:
+            continue
+        rows = _tencent_daily_kline_cached(full_code)
+        if not rows:
+            continue
+        closes = [float(row[2]) for row in rows if len(row) > 2]
+        if matcher(rows, closes):
+            result.append(candidate)
+        if len(result) >= limit:
+            break
+    return result
+
+
+STRATEGY_GROUPS = [
+    ("macd-cross", "MACD 金叉", _macd_golden_cross),
+    ("ma-bullish", "均线多头排列", _ma_bullish),
+    ("breakout", "放量突破新高", _breakout),
+]
+
+
+def get_strategies() -> Dict[str, Any]:
+    with SPEED_RANKING_CACHE_LOCK:
+        cached = SPEED_RANKING_CACHE.get("strategies")
+        if cached and time.monotonic() - cached[0] < STRATEGY_CACHE_TTL_SECONDS:
+            return copy.deepcopy(cached[1])
+
+        state = load_state()
+        stock_set = set(state["stocks"])
+        candidates = _strategy_candidates()
+        groups: List[Dict[str, Any]] = []
+        for group_id, group_name, matcher in STRATEGY_GROUPS:
+            items = _apply_strategy(candidates, matcher)
+            for item in items:
+                full_code = _eastmoney_a_share_code(item["code"])
+                if full_code in stock_set:
+                    gid, gname = _stock_group_label(state, full_code, "A")
+                    item["added"] = True
+                    item["group_id"] = gid
+                    item["group_name"] = gname
+                else:
+                    item["added"] = False
+                    item["group_id"] = ""
+                    item["group_name"] = ""
+            groups.append(
+                {"id": group_id, "name": group_name, "items": items}
+            )
+        result = {
+            "success": True,
+            "groups": groups,
+            "updated_at": int(time.time()),
+        }
+        SPEED_RANKING_CACHE["strategies"] = (time.monotonic(), result)
+        return copy.deepcopy(result)
+
+
+def fetch_sina_ranking(
+    rank_type: str = "up",
+    limit: int = SPEED_RANKING_LIMIT,
+) -> List[Dict[str, Any]]:
+    """通过新浪沪深 A 股排行接口获取涨幅榜/跌幅榜。"""
+    query = urllib_parse.urlencode(
+        {
+            "page": 1,
+            "num": limit,
+            "sort": "changepercent",
+            "asc": 0 if rank_type == "up" else 1,
+            "node": "hs_a",
+        }
+    )
+    url = (
+        "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+        f"Market_Center.getHQNodeData?{query}"
+    )
+    raw = _http_get(url)
+    payload = json.loads(raw.decode("utf-8", errors="replace"))
+    items: List[Dict[str, Any]] = []
+    for row in payload if isinstance(payload, list) else []:
+        if not isinstance(row, dict):
+            continue
+        code = normalize_code(row.get("symbol"))
+        name = str(row.get("name") or "").strip()
+        price = _number(row.get("trade"), float("nan"))
+        percent = _number(row.get("changepercent"), float("nan"))
+        if (
+            not code
+            or not code.startswith(("sh", "sz"))
+            or not name
+            or "ST" in name.upper()
+            or price != price
+            or percent != percent
+            or price <= 0
+        ):
+            continue
+        items.append(
+            {
+                "code": code[2:],
+                "name": name,
+                "price": _display_price(code, name, price),
+                "percent": f"{percent:+.2f}",
+                "speed": 0.0,
+            }
+        )
+
+    items.sort(
+        key=lambda item: _number(item["percent"]),
+        reverse=(rank_type == "up"),
+    )
+    return items[: max(0, limit)]
+
+
+def fetch_ranking(
+    rank_type: str = "speed",
+    limit: int = SPEED_RANKING_LIMIT,
+) -> List[Dict[str, Any]]:
+    if rank_type in ("up", "down"):
+        return fetch_sina_ranking(rank_type, limit)
+    if rank_type == "speed":
+        try:
+            return fetch_tencent_speed_ranking(limit)
+        except Exception:
+            pass
+
+    config = RANKING_TYPES.get(rank_type, RANKING_TYPES["speed"])
+    query = urllib_parse.urlencode(
+        {
+            "pn": 1,
+            "pz": limit,
+            "po": config["po"],
+            "np": 1,
+            "fltt": 2,
+            "invt": 2,
+            "fid": config["fid"],
+            "fs": EASTMONEY_A_SHARE_FILTER,
+            "fields": "f12,f14,f2,f3,f22",
+        }
+    )
+    urls = [
+        f"{EASTMONEY_SPEED_RANKING_URL}?{query}",
+        f"{EASTMONEY_SPEED_RANKING_FALLBACK_URL}?{query}",
+    ]
+    last_error: Optional[Exception] = None
+    for url in urls:
+        try:
+            raw = _http_get(url)
+            payload = json.loads(raw.decode("utf-8", errors="replace"))
+            return parse_speed_ranking(payload, limit, rank_type)
+        except Exception as exc:  # noqa: BLE001 — fall back to delay node
+            last_error = exc
+    raise RuntimeError(f"榜单所有行情源均不可用：{last_error}") from last_error
+
+
+def _stock_group_label(
+    state: Dict[str, Any],
+    code: str,
+    category: str,
+) -> Tuple[str, str]:
+    """返回股票所在的最下级分组 (group_id, group_name)。
+
+    自定义分组返回股票直接所在的分组（不向上追溯到父分组）；
+    否则返回关注/持仓的内置标识。
+    """
+    for group in state["groups"]:
+        if group["category"] != category or code not in group["stock_codes"]:
+            continue
+        return group["id"], group["name"]
+    if code in state["watch_codes"]:
+        return "watch", ""
+    if code in state["holding_codes"]:
+        return "holding", ""
+    return "", ""
+
+
+def get_ranking(rank_type: str = "speed") -> Dict[str, Any]:
+    with SPEED_RANKING_CACHE_LOCK:
+        cached = SPEED_RANKING_CACHE.get(rank_type)
+        if cached and time.monotonic() - cached[0] < SPEED_RANKING_CACHE_TTL_SECONDS:
+            return copy.deepcopy(cached[1])
+
+        state = load_state()
+        stock_set = set(state["stocks"])
+        items = fetch_ranking(rank_type, SPEED_RANKING_LIMIT)
+        for item in items:
+            full_code = _eastmoney_a_share_code(item["code"])
+            if full_code in stock_set:
+                group_id, group_name = _stock_group_label(
+                    state, full_code, "A"
+                )
+                item["added"] = True
+                item["group_id"] = group_id
+                item["group_name"] = group_name
+            else:
+                item["added"] = False
+                item["group_id"] = ""
+                item["group_name"] = ""
+        result = {
+            "success": True,
+            "items": items,
+            "updated_at": int(time.time()),
+        }
+        SPEED_RANKING_CACHE[rank_type] = (time.monotonic(), result)
+        return copy.deepcopy(result)
+
+
 def _load_market_cache() -> Dict[str, Any]:
     cached = _read_json(market_cache_path(), {})
     return cached if isinstance(cached, dict) else {}
@@ -510,16 +1108,16 @@ def _save_market_cache(quotes: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     return payload
 
 
-def refresh_quotes(state: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+def refresh_quotes(
+    state: Dict[str, Any],
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
     with SNAPSHOT_LOCK:
         cached = _load_market_cache()
         cached_quotes = cached.get("quotes", {})
         quotes = dict(cached_quotes) if isinstance(cached_quotes, dict) else {}
         errors: List[str] = []
         fetched_count = 0
-        sina_codes = [
-            code for code in state["stocks"] if category_of(code) == "A"
-        ]
+        sina_codes = [code for code in state["stocks"] if category_of(code) == "A"]
         sina_codes.extend(DEFAULT_INDEX_CODES)
 
         try:
@@ -574,18 +1172,12 @@ def build_categories(
         custom_groups = [
             group for group in state["groups"] if group["category"] == category
         ]
-        grouped_codes = {
-            code for group in custom_groups for code in group["stock_codes"]
-        }
         builtin_code_map = {
             "holding": [
                 code for code in state["holding_codes"] if category_of(code) == category
             ],
             "watch": [
                 code for code in state["watch_codes"] if category_of(code) == category
-            ],
-            "ungrouped": [
-                code for code in category_codes if code not in grouped_codes
             ],
         }
         groups: List[Dict[str, Any]] = []
@@ -609,8 +1201,7 @@ def build_categories(
                 "builtin": False,
                 "parent_id": group.get("parent_id"),
                 "stocks": [
-                    _stock_view(code, quotes, state)
-                    for code in group["stock_codes"]
+                    _stock_view(code, quotes, state) for code in group["stock_codes"]
                 ],
                 "children": [],
             }
@@ -648,16 +1239,9 @@ def build_snapshot() -> Dict[str, Any]:
     quotes, market_status = refresh_quotes(state)
     status_codes = _dedupe(
         DEFAULT_INDEX_CODES
-        + [
-            code
-            for code in state["status_bar_stock_codes"]
-            if category_of(code) == "A"
-        ]
+        + [code for code in state["status_bar_stock_codes"] if category_of(code) == "A"]
     )
-    status_bar = [
-        _stock_view(code, quotes, state)
-        for code in status_codes
-    ]
+    status_bar = [_stock_view(code, quotes, state) for code in status_codes]
     return {
         "success": True,
         "categories": build_categories(state, quotes),
@@ -732,6 +1316,35 @@ def stock_search(q: str = "") -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"股票查询失败：{exc}") from exc
 
 
+@router.get("/stock-minute")
+def stock_minute(code: str = "") -> Dict[str, Any]:
+    try:
+        return get_a_minute_line(code)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"分时走势请求失败：{exc}") from exc
+
+
+@router.get("/speed-ranking")
+def speed_ranking(type: str = "speed") -> Dict[str, Any]:
+    rank_type = str(type or "").strip().lower()
+    if rank_type not in RANKING_TYPES:
+        raise HTTPException(status_code=400, detail="榜单类型不正确。")
+    try:
+        return get_ranking(rank_type)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"行情排行请求失败：{exc}") from exc
+
+
+@router.get("/strategies")
+def strategies() -> Dict[str, Any]:
+    try:
+        return get_strategies()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"策略选股请求失败：{exc}") from exc
+
+
 @router.post("/stocks")
 def add_stock(body: Dict[str, Any]) -> Dict[str, Any]:
     code = _require_code(body.get("code"))
@@ -739,6 +1352,8 @@ def add_stock(body: Dict[str, Any]) -> Dict[str, Any]:
     def change(state: Dict[str, Any]) -> None:
         if code not in state["stocks"]:
             state["stocks"].append(code)
+        if code not in state["watch_codes"]:
+            state["watch_codes"].append(code)
 
     state = mutate_state(change)
     return {"ok": True, "state": state}
@@ -846,19 +1461,16 @@ def reorder_group(group_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
         target = _require_group(state, target_group_id)
         if group["id"] == target["id"]:
             return
-        if (
-            group["category"] != target["category"]
-            or group.get("parent_id") != target.get("parent_id")
-        ):
+        if group["category"] != target["category"] or group.get(
+            "parent_id"
+        ) != target.get("parent_id"):
             raise HTTPException(
                 status_code=400,
                 detail="只能在同一层级内调整分组顺序。",
             )
         groups = [item for item in state["groups"] if item["id"] != group_id]
         target_index = next(
-            index
-            for index, item in enumerate(groups)
-            if item["id"] == target_group_id
+            index for index, item in enumerate(groups) if item["id"] == target_group_id
         )
         if placement == "after":
             target_index += 1
@@ -883,7 +1495,10 @@ def move_stock(code: str, body: Dict[str, Any]) -> Dict[str, Any]:
                 group["stock_codes"] = [
                     item for item in group["stock_codes"] if item != normalized
                 ]
-        if target_group_id and target_group_id != "ungrouped":
+        if target_group_id == "watch":
+            if normalized not in state["watch_codes"]:
+                state["watch_codes"].append(normalized)
+        elif target_group_id:
             target = _require_group(state, target_group_id)
             if target["category"] != category:
                 raise HTTPException(status_code=400, detail="不能跨市场移动股票。")
@@ -919,8 +1534,7 @@ def reorder_stock(code: str, body: Dict[str, Any]) -> Dict[str, Any]:
                     detail="股票不在当前叠加列表中。",
                 )
             if target_code and (
-                target_code not in overlay_codes
-                or category_of(target_code) != category
+                target_code not in overlay_codes or category_of(target_code) != category
             ):
                 raise HTTPException(
                     status_code=400,
@@ -934,34 +1548,23 @@ def reorder_stock(code: str, body: Dict[str, Any]) -> Dict[str, Any]:
             )
             return
 
-        target_group = None
-        if target_group_id != "ungrouped":
-            target_group = _require_group(state, target_group_id)
-            if target_group["category"] != category:
-                raise HTTPException(status_code=400, detail="不能跨市场移动股票。")
+        target_group = _require_group(state, target_group_id)
+        if target_group["category"] != category:
+            raise HTTPException(status_code=400, detail="不能跨市场移动股票。")
 
         if target_code:
             if target_code == normalized:
                 return
-            if target_code not in state["stocks"] or category_of(target_code) != category:
+            if (
+                target_code not in state["stocks"]
+                or category_of(target_code) != category
+            ):
                 raise HTTPException(status_code=400, detail="拖动目标股票不正确。")
-            if target_group:
-                if target_code not in target_group["stock_codes"]:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="目标股票不在目标分组中。",
-                    )
-            else:
-                target_is_grouped = any(
-                    target_code in group["stock_codes"]
-                    for group in state["groups"]
-                    if group["category"] == category
+            if target_code not in target_group["stock_codes"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="目标股票不在目标分组中。",
                 )
-                if target_is_grouped:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="目标股票不在未分组列表中。",
-                    )
 
         for group in state["groups"]:
             if group["category"] == category:
@@ -969,20 +1572,12 @@ def reorder_stock(code: str, body: Dict[str, Any]) -> Dict[str, Any]:
                     item for item in group["stock_codes"] if item != normalized
                 ]
 
-        if target_group:
-            target_group["stock_codes"] = _insert_relative(
-                target_group["stock_codes"],
-                normalized,
-                target_code,
-                placement,
-            )
-        else:
-            state["stocks"] = _insert_relative(
-                state["stocks"],
-                normalized,
-                target_code,
-                placement,
-            )
+        target_group["stock_codes"] = _insert_relative(
+            target_group["stock_codes"],
+            normalized,
+            target_code,
+            placement,
+        )
 
     state = mutate_state(change)
     return {"ok": True, "state": state}
