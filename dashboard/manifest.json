@@ -1,7 +1,0 @@
-{
-  "name": "leek-fund",
-  "label": "LeekFund",
-  "description": "Market data backend for the LeekFund Hermes Desktop plugin.",
-  "version": "0.1.0",
-  "api": "plugin_api.py"
-}

@@ -1,0 +1,15 @@
+# Development patch layer for dsh-leek-fund.
+#
+# Load the plugin from this checkout's TypeScript source without installing the
+# bundle:
+#
+#   dsh web --patch /absolute/path/to/leek-fund/dsh-plugin/cordis.dev.yml
+#
+# The plugin row must resolve to an absolute path (Loader resolves module paths
+# against the profile directory, not against this patch file). `$LEEK_FUND_ROOT`
+# below is a placeholder: replace it with the absolute path of this repository,
+# or run `dsh web --patch "$(pwd)/dsh-plugin/cordis.dev.yml"` from the repo root
+# after replacing the placeholder with the absolute path.
+- insert:
+    - id: leek-fund
+      name: $LEEK_FUND_ROOT/dsh-plugin/src/index.ts

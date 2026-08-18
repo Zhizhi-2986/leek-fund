@@ -1,0 +1,7 @@
+# Bundle configuration layer for dsh-leek-fund.
+# This file is referenced by the package's `dsh.bundle.patch` manifest and is
+# applied when a profile lists `dsh-leek-fund` in its `dsh.profile.bundles`.
+# The plugin row resolves the package by name through the profile's node_modules.
+- insert:
+    - id: leek-fund
+      name: dsh-leek-fund
