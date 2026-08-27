@@ -12,6 +12,8 @@ export interface SnapshotState {
   watchCodes: string[]
   focusCodes?: string[]
   statusBarStockCodes: string[]
+  strategyUpdatedAt?: string
+  strategyMatchCount?: number
 }
 
 export interface Snapshot {
@@ -64,4 +66,20 @@ export function categoryOf(code: string): 'A' | 'HK' | 'US' | undefined {
   if (code.startsWith('hk')) return 'HK'
   if (code.startsWith('usr_') || code.startsWith('gb_')) return 'US'
   return undefined
+}
+
+/** 大盘实时概览 */
+export interface MarketOverview {
+  upCount: number
+  downCount: number
+  flatCount: number
+  shAmount: number
+  szAmount: number
+  totalAmount: number
+  estimatedCloseAmount: number
+  time: string
+}
+
+export function fetchMarketOverview(signal?: AbortSignal): Promise<MarketOverview> {
+  return call<MarketOverview>('marketOverview', {}, signal)
 }

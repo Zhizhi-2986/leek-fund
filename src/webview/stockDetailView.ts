@@ -1,7 +1,7 @@
 import { ViewColumn, window } from 'vscode';
 import StockService from '../explorer/stockService';
 import { LeekFundConfig } from '../shared/leekConfig';
-import { getAStockDetailData } from '../shared/stockDetailData';
+import { getAStockDetailData, getMarketOverview } from '../shared/stockDetailData';
 import { SortType } from '../shared/typed';
 import { getTemplateFileContent } from '../shared/utils';
 import ReusedWebviewPanel from './ReusedWebviewPanel';
@@ -46,6 +46,9 @@ export class StockDetailView {
             break;
           case 'getStockDetail':
             await this.postStockDetail(String(msg.code || ''), Number(msg.requestId || 0));
+            break;
+          case 'getMarketOverview':
+            await this.postMarketOverview();
             break;
           default:
             break;
@@ -92,6 +95,22 @@ export class StockDetailView {
         info: item.info,
       }));
 
+    // 如果当前选中的是指数但不在 stockList 中，也加入列表
+    const hasPendingCode = this.pendingInitialCode &&
+      /^(sh|sz|bj)\d{6}$/.test(this.pendingInitialCode) &&
+      !stockList.some((s) => s.id === this.pendingInitialCode);
+    if (hasPendingCode) {
+      const stockItem = this.stockService.stockList.find(
+        (item) => item.info.code === this.pendingInitialCode
+      );
+      if (stockItem) {
+        stockList.unshift({
+          id: stockItem.info.code,
+          info: stockItem.info,
+        });
+      }
+    }
+
     this.panel.webview.postMessage({
       command: 'stockListReady',
       data: {
@@ -105,7 +124,7 @@ export class StockDetailView {
   private async postStockDetail(code: string, requestId: number): Promise<void> {
     const normalizedCode = normalizeCode(code);
     if (!/^(sh|sz|bj)\d{6}$/.test(normalizedCode)) {
-      throw new Error(`仅支持 A 股股票详情：${code}`);
+      throw new Error(`仅支持 A 股（含指数）详情：${code}`);
     }
 
     const detail = await getAStockDetailData(normalizedCode);
@@ -114,6 +133,14 @@ export class StockDetailView {
       requestId,
       code: normalizedCode,
       data: detail,
+    });
+  }
+
+  private async postMarketOverview(): Promise<void> {
+    const overview = await getMarketOverview();
+    this.panel?.webview.postMessage({
+      command: 'marketOverviewReady',
+      data: overview,
     });
   }
 }

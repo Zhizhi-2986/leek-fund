@@ -20,7 +20,7 @@ export function TopTicker({ quotes }: { quotes: Quote[] }): JSX.Element {
         <div key={quote.code} className={s.tickerItem}>
           <span className={s.tickerName}>{quote.name}</span>
           <span className={`${s.tickerValue} ${priceClass(quote.percent)}`}>
-            {displayPrice(quote.code, quote.name, quote.price)} {formatPercent(quote.percent)}
+            {quote.percent > 0 ? '▲' : quote.percent < 0 ? '▼' : ''} {displayPrice(quote.code, quote.name, quote.price)} {formatPercent(quote.percent)}
           </span>
         </div>
       ))}

@@ -20,9 +20,11 @@ import {
   removeStock,
   renameGroup,
   setMark,
+  updateStrategyGroup,
   type MutationResult,
   type StateStore,
 } from './state.js'
+import { evaluateBatch, STRATEGY_GROUP_NAME } from './strategy.js'
 import type { Quote, State } from './types.js'
 
 export interface ToolDeps {
@@ -442,6 +444,91 @@ export function defineTools(deps: ToolDeps) {
       async execute(args) {
         const result = await runMutation(store, (state) => setMark(state, args.code, args.mark, args.value))
         return { code: args.code, mark: args.mark, value: args.value, ok: result.ok, error: result.error }
+      },
+    }),
+
+    defineTool({
+      name: 'stock_strategy_run',
+      description:
+        '手动触发策略选股评估。扫描自选 A 股，按核心交易策略（120Min EMA20 趋势、MACD 动能、成交量放量、RSI 约束）筛选符合条件的个股，更新「策略选股」分组。',
+      parameters: {},
+      output: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            matched: { type: 'array', required: true, items: { type: 'string' }, description: '符合条件的股票代码' },
+            failed: { type: 'array', required: true, items: { type: 'string' }, description: '不符合条件的股票代码' },
+            skipped: { type: 'array', required: true, items: { type: 'string' }, description: '数据不足跳过的股票代码' },
+            evaluatedAt: { type: 'string', required: true, description: '评估时间 (ISO)' },
+            totalAStocks: { type: 'number', required: true, description: '自选 A 股总数' },
+            ok: { type: 'boolean', required: true, description: '是否成功' },
+            error: { type: 'string', description: '失败原因' },
+          },
+        },
+        render: (_args, value) => {
+          if (!value.ok) return [{ type: 'text', text: `策略选股失败: ${value.error}` }]
+          const lines = [
+            `【策略选股结果】`,
+            `评估时间: ${value.evaluatedAt}`,
+            `自选 A 股总数: ${value.totalAStocks}`,
+            `匹配: ${value.matched.length} 只`,
+            value.matched.length > 0 ? `  ${value.matched.join(', ')}` : '',
+            `不符合: ${value.failed.length} 只`,
+            `跳过(数据不足): ${value.skipped.length} 只`,
+            value.matched.length > 0
+              ? '\n已更新「策略选股」分组。'
+              : '\n当前无股票符合策略条件。',
+          ]
+          return [{ type: 'text', text: lines.filter(Boolean).join('\n') }]
+        },
+      },
+      async execute() {
+        try {
+          const state = await store.load()
+          const aStockCodes = state.stocks.filter((code) => categoryOf(code) === 'A')
+          if (aStockCodes.length === 0) {
+            return {
+              matched: [],
+              failed: [],
+              skipped: [],
+              evaluatedAt: new Date().toISOString(),
+              totalAStocks: 0,
+              ok: false,
+              error: '自选列表中没有 A 股',
+            }
+          }
+
+          const result = await evaluateBatch(aStockCodes, undefined, deps.timeoutMs)
+
+          // Persist the result to the strategy group
+          let persistError: string | undefined
+          await store.mutate((state) => {
+            updateStrategyGroup(state, result.matched)
+          }).catch((err: unknown) => {
+            persistError = String(err)
+          })
+
+          return {
+            matched: result.matched,
+            failed: result.failed,
+            skipped: result.skipped,
+            evaluatedAt: result.evaluatedAt,
+            totalAStocks: aStockCodes.length,
+            ok: !persistError,
+            error: persistError,
+          }
+        } catch (err) {
+          return {
+            matched: [],
+            failed: [],
+            skipped: [],
+            evaluatedAt: new Date().toISOString(),
+            totalAStocks: 0,
+            ok: false,
+            error: String(err),
+          }
+        }
       },
     }),
   ]

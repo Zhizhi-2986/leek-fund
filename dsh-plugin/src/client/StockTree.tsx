@@ -4,7 +4,8 @@
  * green-down colors, group up/down/flat summaries, drag reordering, a right
  * click menu and the top ticker. Parity with the Hermes Desktop plugin.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { displayPrice, formatPercent } from '../quote.js'
 import { categoryOf, fetchSnapshot, mutate, reorder, type Snapshot } from './api.js'
 import { MoveDialog } from './MoveDialog.js'
@@ -16,6 +17,8 @@ import type { Group, Quote } from './types.js'
 import s from './styles.module.css'
 
 const REFRESH_MS = 2000
+/** Matches the server-side constant used for the auto-populated strategy group. */
+const STRATEGY_GROUP_NAME = '策略选股'
 
 type StockListKey = 'holding' | 'focus' | 'watch' | 'ungroupped' | `group:${string}`
 
@@ -56,12 +59,20 @@ function priceClass(percent: number): string {
   return s.flat
 }
 
-function quoteLine(quote: Quote | undefined): { price: string; percent: string; cls: string } {
-  if (!quote) return { price: '--', percent: '--', cls: s.flat }
+/** Direction mark for the low-key color scheme (▲ up / ▼ down). */
+function directionMark(percent: number): string {
+  if (percent > 0) return '▲'
+  if (percent < 0) return '▼'
+  return ''
+}
+
+function quoteLine(quote: Quote | undefined): { price: string; percent: string; cls: string; mark: string } {
+  if (!quote) return { price: '--', percent: '--', cls: s.flat, mark: '' }
   return {
     price: displayPrice(quote.code, quote.name, quote.price),
     percent: formatPercent(quote.percent),
     cls: priceClass(quote.percent),
+    mark: directionMark(quote.percent),
   }
 }
 
@@ -77,6 +88,30 @@ function summarize(codes: string[], quotes: Map<string, Quote>): string {
     else flat += 1
   }
   return `↑${up} ↓${down} =${flat}`
+}
+
+/** Format an ISO timestamp into a short relative or absolute time string. */
+function formatStrategyTime(iso: string): string {
+  try {
+    const then = new Date(iso)
+    if (Number.isNaN(then.getTime())) return ''
+    const now = Date.now()
+    const diffMs = now - then.getTime()
+    // Less than 1 minute
+    if (diffMs < 60_000) return '刚刚'
+    // Less than 1 hour
+    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)} 分钟前`
+    // Less than 6 hours
+    if (diffMs < 21_600_000) return `${Math.floor(diffMs / 3_600_000)} 小时前`
+    // Show date
+    const month = String(then.getMonth() + 1).padStart(2, '0')
+    const day = String(then.getDate()).padStart(2, '0')
+    const hour = String(then.getHours()).padStart(2, '0')
+    const min = String(then.getMinutes()).padStart(2, '0')
+    return `${month}-${day} ${hour}:${min}`
+  } catch {
+    return ''
+  }
 }
 
 /** Read the drag payload synchronously (native event lifetime rules). */
@@ -148,6 +183,11 @@ export function StockTreeView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded, tab.id, ctx])
 
+  // Log menu state changes for debugging.
+  useEffect(() => {
+    console.log('[leek-fund] menu state:', menu ? `shown at (${menu.x}, ${menu.y}) with ${menu.items.length} items` : 'hidden')
+  }, [menu])
+
   // Close the context menu on any outside click.
   useEffect(() => {
     if (!menu) return
@@ -207,7 +247,7 @@ export function StockTreeView({
     const name = quotes.get(code)?.name ?? code
     const isHolding = (snapshot?.state.holdingCodes ?? []).includes(code)
     const isFocus = (snapshot?.state.focusCodes ?? []).includes(code)
-    const inTicker = snapshot?.state.statusBarStockCodes.includes(code) ?? false
+    const inTicker = (snapshot?.state.statusBarStockCodes ?? []).includes(code)
     const items: MenuItem[] = [
       {
         label: isFocus ? '取消重点关注' : '标记重点关注',
@@ -230,6 +270,7 @@ export function StockTreeView({
       },
       { label: '删除', danger: true, action: () => void runMutate('remove', { code }) },
     ]
+    console.log('[leek-fund] right-click stock:', code, 'list:', list)
     openMenu(event.clientX, event.clientY, items)
   }
 
@@ -275,6 +316,7 @@ export function StockTreeView({
         },
       },
     ]
+    console.log('[leek-fund] right-click group:', group.id, group.name)
     openMenu(event.clientX, event.clientY, items)
   }
 
@@ -390,9 +432,8 @@ export function StockTreeView({
       ? (dropHint.position === 'after' ? s.dropAfter : s.dropBefore)
       : ''
     return (
-      <>
+      <Fragment key={code}>
       <div
-        key={code}
         className={`${s.stockRow} ${s[`level${level}`]} ${hintKey} ${dragging?.kind === 'stock' && dragging.code === code ? s.dragging : ''}`}
         draggable
         onDragStart={(event) => startDrag(event, { kind: 'stock', code, list })}
@@ -424,7 +465,9 @@ export function StockTreeView({
         onDrop={(event) => onStockDrop(event, code, list)}
         onContextMenu={(event) => stockMenu(event, code, list)}
       >
-        <span className={s.stockName}>{quote?.name ?? code}</span>
+        <span className={s.stockName}>
+          <span className={`${s.stockMark} ${line.cls}`}>{line.mark}</span> {quote?.name ?? code}
+        </span>
         <span className={s.stockCode}>{code}</span>
         <span className={s.stockQuote}>
           <span className={`${s.stockPrice} ${line.cls}`}>{line.price}</span>
@@ -434,7 +477,7 @@ export function StockTreeView({
       {expandedDetail.has(code) && (
         <StockDetail code={code} name={quote?.name ?? code} />
       )}
-    </>
+    </Fragment>
     )
   }
 
@@ -482,6 +525,11 @@ export function StockTreeView({
             ▶
           </span>
           <span>{group.name}</span>
+          {group.name === STRATEGY_GROUP_NAME && snapshot?.state.strategyUpdatedAt && (
+            <span className={s.strategyInfo}>
+              {formatStrategyTime(snapshot.state.strategyUpdatedAt)}
+            </span>
+          )}
           <span className={s.groupSummary}>{summary}</span>
         </div>
         {isOpen && (
@@ -603,8 +651,8 @@ export function StockTreeView({
           onError={showError}
         />
       )}
-      {menu && (
-        <div className={s.menu} style={{ left: menu.x, top: menu.y }} onClick={(event) => event.stopPropagation()}>
+      {menu && createPortal(
+        (<div className={s.menu} style={{ left: menu.x, top: menu.y, zIndex: 999999, background: '#fff' }} onClick={(event) => event.stopPropagation()}>
           {menu.items.map((item) => (
             <button
               key={item.label}
@@ -617,7 +665,8 @@ export function StockTreeView({
               {item.label}
             </button>
           ))}
-        </div>
+        </div>),
+        document.body
       )}
     </div>
   )

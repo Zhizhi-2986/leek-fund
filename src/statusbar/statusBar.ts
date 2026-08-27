@@ -13,6 +13,7 @@ import {
   formatNumber,
   randHeader,
 } from '../shared/utils';
+import { getQuotes } from '../data-source';
 
 const STOCK_STATUS_BAR_PRIORITY = 4;
 const INDEX_STATUS_BAR_START_PRIORITY = 3;
@@ -268,156 +269,54 @@ export class StatusBar {
   }
 
   private async fetchStatusBarIndexData(): Promise<StatusBarIndexInfo[]> {
-    const url = `https://hq.sinajs.cn/list=${DEFAULT_STATUS_BAR_INDEX_CODES.join(',')}`;
-    const resp = await Axios.get<string>(url, {
-      responseType: 'arraybuffer',
-      transformResponse: [
-        (data) => {
-          const body = decode(data, 'GB18030');
-          return body;
-        },
-      ],
-      headers: {
-        ...randHeader(),
-        Referer: 'http://finance.sina.com.cn/',
-      },
-    });
-    const indexMap = new Map<string, StatusBarIndexInfo>();
-    String(resp.data || '')
-      .split('\n')
-      .forEach((line) => {
-        const match = line.match(/^var hq_str_([^=]+)="([^"]*)";?$/);
-        if (!match) return;
-        const code = match[1].replace('$', '.');
-        const params = match[2].split(',');
-        if (!params[0]) return;
-        const indexInfo = this.parseStatusBarIndexInfo(code, params);
-        if (indexInfo) {
-          indexMap.set(code, indexInfo);
-        }
-      });
-
-    return DEFAULT_STATUS_BAR_INDEX_CODES.map((code) => indexMap.get(code)).filter(
-      (item): item is StatusBarIndexInfo => Boolean(item)
-    );
+    const codes = DEFAULT_STATUS_BAR_INDEX_CODES;
+    const quoteMap = await getQuotes(codes);
+    return codes
+      .map((code) => {
+        const quote = quoteMap.get(code);
+        if (!quote) return null;
+        return this.quoteToStatusBarIndexInfo(quote);
+      })
+      .filter((item): item is StatusBarIndexInfo => Boolean(item));
   }
 
-  private parseStatusBarIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
-    if (code.startsWith('int_')) {
-      return this.parseSimpleGlobalIndexInfo(code, params);
-    }
-    if (code.startsWith('b_')) {
-      return this.parseDetailedGlobalIndexInfo(code, params);
-    }
-    return this.parseCnIndexInfo(code, params);
-  }
-
-  private parseCnIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
-    if (params.length <= 5) {
-      return null;
-    }
-    const open = params[1] || '0';
-    const yestclose = params[2] || '0';
-    const price = params[3] || '0';
-    const high = params[4] || '0';
-    const low = params[5] || '0';
-    const amount = params[9] || '0';
-    const time = [params[30], params[31]].filter(Boolean).join(' ');
-    return this.buildStatusBarIndexInfo(
-      code,
-      params[0],
-      open,
-      yestclose,
-      price,
-      high,
-      low,
-      amount,
-      time
-    );
-  }
-
-  private parseSimpleGlobalIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
-    if (params.length <= 3) {
-      return null;
-    }
-    const price = params[1] || '0';
-    const updown = params[2] || '0';
-    const yestclose = String(Number(price) - Number(updown));
-    return this.buildStatusBarIndexInfo(
-      code,
-      params[0],
-      price,
-      yestclose,
-      price,
-      price,
-      price,
-      '0',
-      ''
-    );
-  }
-
-  private parseDetailedGlobalIndexInfo(code: string, params: string[]): StatusBarIndexInfo | null {
-    if (params.length <= 11) {
-      return null;
-    }
-    const price = params[1] || '0';
-    const updown = params[2] || '0';
-    const yestclose = String(Number(price) - Number(updown));
-    const open = params[8] || price;
-    const high = params[10] || price;
-    const low = params[11] || price;
-    const amount = params[12] || '0';
-    const time = [params[6], params[7] || params[5]].filter(Boolean).join(' ');
-    return this.buildStatusBarIndexInfo(
-      code,
-      params[0],
-      open,
-      yestclose,
-      price,
-      high,
-      low,
-      amount,
-      time
-    );
-  }
-
-  private buildStatusBarIndexInfo(
-    code: string,
-    name: string,
-    open: string,
-    yestclose: string,
-    price: string,
-    high: string,
-    low: string,
-    amount: string,
+  private quoteToStatusBarIndexInfo(quote: {
+    code: string
+    name: string
+    price: number
+    yestclose: number
+    open: number
+    high: number
+    low: number
+    amount: number
     time: string
-  ): StatusBarIndexInfo | null {
-    const openValue = Number(open);
-    const priceValue = Number(price);
-    const yestcloseValue = Number(yestclose);
-    const highValue = Number(high);
-    const lowValue = Number(low);
-    if (!name || !Number.isFinite(priceValue)) {
-      return null;
-    }
+  }): StatusBarIndexInfo | null {
+    const { code, name, price, yestclose, open, high, low, amount, time } = quote;
+    if (!name || !Number.isFinite(price)) return null;
 
-    const fixedNumber = calcFixedPriceNumber(open, yestclose, price, high, low);
-    const updownValue = priceValue - yestcloseValue;
-    const percentValue = yestcloseValue ? (Math.abs(updownValue) / yestcloseValue) * 100 : 0;
+    const openStr = String(open);
+    const yestcloseStr = String(yestclose);
+    const priceStr = String(price);
+    const highStr = String(high);
+    const lowStr = String(low);
+
+    const fixedNumber = calcFixedPriceNumber(openStr, yestcloseStr, priceStr, highStr, lowStr);
+    const updownValue = price - yestclose;
+    const percentValue = yestclose ? (Math.abs(updownValue) / yestclose) * 100 : 0;
     const sign = updownValue >= 0 ? '+' : '-';
 
     return {
       code,
       name,
-      open: formatNumber(openValue, fixedNumber, false),
-      yestclose: formatNumber(yestcloseValue, fixedNumber, false),
-      price: formatNumber(priceValue, fixedNumber, false),
-      high: formatNumber(highValue, fixedNumber, false),
-      low: formatNumber(lowValue, fixedNumber, false),
+      open: formatNumber(open, fixedNumber, false),
+      yestclose: formatNumber(yestclose, fixedNumber, false),
+      price: formatNumber(price, fixedNumber, false),
+      high: formatNumber(high, fixedNumber, false),
+      low: formatNumber(low, fixedNumber, false),
       updown: formatNumber(updownValue, fixedNumber, false),
       updownValue,
       percent: `${sign}${formatNumber(percentValue, 2, false)}`,
-      amount: formatNumber(Number(amount || 0), 2),
+      amount: formatNumber(amount || 0, 2),
       time,
     };
   }

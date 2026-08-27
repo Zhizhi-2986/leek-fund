@@ -28,6 +28,10 @@ export interface State {
   focusCodes: string[]
   /** Subset of `stocks` pinned to the status bar (kept for VSCode parity). */
   statusBarStockCodes: string[]
+  /** ISO timestamp of the last strategy evaluation run. */
+  strategyUpdatedAt?: string
+  /** Number of stocks that matched the last strategy evaluation. */
+  strategyMatchCount?: number
 }
 
 /** One normalized market quote. */

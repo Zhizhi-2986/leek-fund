@@ -10,7 +10,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { handleApiRequest, isTrustedApiRequest, writeJson, type ApiDeps } from './api.js'
-import { createStateStore } from './state.js'
+import { categoryOf, createStateStore, updateStrategyGroup } from './state.js'
+import { evaluateBatch, isInTradingHours } from './strategy.js'
 import { registerTools } from './tools.js'
 
 declare module '@deepseek-ai/cordis' {
@@ -64,6 +65,59 @@ export function apply(ctx: Context, config: Config) {
         },
       }),
     'dsh-leek-fund: /leek-fund/api routes'
+  )
+
+  // ── Strategy evaluation scheduler (every 30 min during trading hours) ──
+  const STRATEGY_INTERVAL_MS = 30 * 60 * 1000
+  let strategyTimer: ReturnType<typeof setInterval> | undefined
+
+  async function runStrategyEvaluation(): Promise<void> {
+    if (!isInTradingHours()) return
+
+    try {
+      const state = await store.load()
+      const aStockCodes = state.stocks.filter((code) => categoryOf(code) === 'A')
+      if (aStockCodes.length === 0) return
+
+      // Build a name map from the state (we don't have names here,
+      // but they're not critical for evaluation)
+      const result = await evaluateBatch(aStockCodes, undefined, timeoutMs)
+
+      if (result.matched.length > 0 || result.failed.length > 0) {
+        await store.mutate((state) => {
+          updateStrategyGroup(state, result.matched)
+          ctx.logger.info(
+            '[leek-fund] 策略选股完成: %d 匹配, %d 失败, %d 跳过',
+            result.matched.length,
+            result.failed.length,
+            result.skipped.length,
+          )
+        })
+      }
+    } catch (error) {
+      ctx.logger.error('[leek-fund] 策略选股调度异常: %s', String(error))
+    }
+  }
+
+  // Run once shortly after startup (with a delay to let the plugin settle),
+  // then every 30 minutes.
+  const startupTimer = setTimeout(() => {
+    void runStrategyEvaluation()
+    strategyTimer = setInterval(() => void runStrategyEvaluation(), STRATEGY_INTERVAL_MS)
+  }, 15_000)
+
+  ctx.effect(
+    () => {
+      // The effect disposal is registered immediately; cleanup runs on unload.
+      return () => {
+        clearTimeout(startupTimer)
+        if (strategyTimer) {
+          clearInterval(strategyTimer)
+          strategyTimer = undefined
+        }
+      }
+    },
+    'dsh-leek-fund: strategy scheduler',
   )
 
   // Warm up the state file on load so a broken/absent data directory fails

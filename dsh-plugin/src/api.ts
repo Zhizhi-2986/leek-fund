@@ -4,7 +4,7 @@
  * the `/leek-fund/api` prefix; the client half fetches it from the browser.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { fetchStockDetail } from './detail.js'
+import { fetchStockDetail, fetchMarketOverview } from './detail.js'
 import { fetchQuotes } from './quote.js'
 import { searchAStocks } from './search.js'
 import {
@@ -22,7 +22,7 @@ import {
   type MutationResult,
   type StateStore,
 } from './state.js'
-import type { State } from './types.js'
+import type { Quote, State } from './types.js'
 
 /** Fixed indices pinned to the top ticker (Hermes parity). */
 export const DEFAULT_INDEX_CODES = ['sh000001', 'sz399006', 'sh000680', 'b_NKY', 'b_KOSPI']
@@ -39,8 +39,15 @@ const detailCache = new Map<string, { at: number; detail: unknown }>()
 async function fetchDetailCached(code: string, deps: ApiDeps): Promise<unknown> {
   const cached = detailCache.get(code)
   if (cached && Date.now() - cached.at < DETAIL_CACHE_TTL_MS) return cached.detail
-  const quotes = await fetchQuotes([code], deps.timeoutMs)
-  const quote = quotes.get(code)
+  // Fetch the Sina live quote as a lightweight fallback for name / high/low
+  // in case the primary Tencent minute API fails.  This is *not* required
+  // for the Tencent path — fetchStockDetail uses it only as a last resort.
+  let quote: Quote | undefined
+  try {
+    quote = (await fetchQuotes([code], deps.timeoutMs)).get(code)
+  } catch {
+    quote = undefined
+  }
   const detail = await fetchStockDetail(code, quote, deps.timeoutMs)
   detailCache.set(code, { at: Date.now(), detail })
   return detail
@@ -171,6 +178,8 @@ export async function buildSnapshot(deps: ApiDeps): Promise<unknown> {
       watchCodes: state.watchCodes,
       focusCodes: state.focusCodes,
       statusBarStockCodes: state.statusBarStockCodes,
+      strategyUpdatedAt: state.strategyUpdatedAt,
+      strategyMatchCount: state.strategyMatchCount,
     },
   }
 }
@@ -204,6 +213,9 @@ export async function handleApiRequest(
         return
       case 'quoteDetail':
         writeOk(res, await fetchDetailCached(requireString(payload.code, 'code').toLowerCase(), deps))
+        return
+      case 'marketOverview':
+        writeOk(res, await fetchMarketOverview(deps.timeoutMs))
         return
       case 'mutate': {
         const op = requireString(payload.op, 'op')

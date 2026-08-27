@@ -23,6 +23,41 @@
           <div id="lastUpdated" class="muted"></div>
         </header>
 
+        <!-- 价格信息栏 -->
+        <section id="priceBar" class="price-bar">
+          <div class="price-bar__item">
+            <span class="price-bar__label">现价</span>
+            <span id="pbPrice" class="price-bar__value price-bar__value--lg">--</span>
+          </div>
+          <div class="price-bar__divider"></div>
+          <div class="price-bar__item">
+            <span class="price-bar__label">涨跌幅</span>
+            <span id="pbPercent" class="price-bar__value">--</span>
+          </div>
+          <div class="price-bar__item">
+            <span class="price-bar__label">涨跌额</span>
+            <span id="pbUpdown" class="price-bar__value">--</span>
+          </div>
+          <div class="price-bar__divider"></div>
+          <div class="price-bar__item">
+            <span class="price-bar__label">涨停</span>
+            <span id="pbLimitUp" class="price-bar__value price-bar__value--up">--</span>
+          </div>
+          <div class="price-bar__item">
+            <span class="price-bar__label">跌停</span>
+            <span id="pbLimitDown" class="price-bar__value price-bar__value--down">--</span>
+          </div>
+          <div class="price-bar__divider"></div>
+          <div class="price-bar__item">
+            <span class="price-bar__label">流通市值</span>
+            <span id="pbMarketCap" class="price-bar__value">--</span>
+          </div>
+          <div class="price-bar__item">
+            <span class="price-bar__label">量比</span>
+            <span id="pbVolumeRatio" class="price-bar__value">--</span>
+          </div>
+        </section>
+
         <div id="message" class="message">加载中...</div>
 
         <section class="grid">
@@ -31,15 +66,54 @@
               <h2>日 K 图</h2>
               <span class="muted">最近 100 条日 K</span>
             </div>
-            <canvas id="dailyKChart" width="980" height="360"></canvas>
+            <canvas id="dailyKChart" width="980" height="320"></canvas>
+            <div id="maValues" class="ma-values"></div>
           </article>
 
           <article class="panel panel--wide">
             <div class="panel__head">
               <h2>当日分时图</h2>
-              <span class="muted">1 分钟聚合</span>
+              <span class="muted" id="minuteChartInfo">1 分钟粒度</span>
             </div>
-            <canvas id="minuteChart" width="980" height="260"></canvas>
+            <canvas id="minuteChart" width="980" height="300"></canvas>
+          </article>
+
+          <article class="panel panel--wide">
+            <div class="panel__head">
+              <h2>大盘概况</h2>
+              <span class="muted" id="marketOverviewTime">实时</span>
+            </div>
+            <div id="marketOverview" class="market-overview">
+              <div class="market-overview__item">
+                <span class="market-overview__label">上涨家数</span>
+                <span id="moUpCount" class="market-overview__value market-overview__value--up">--</span>
+              </div>
+              <div class="market-overview__item">
+                <span class="market-overview__label">下跌家数</span>
+                <span id="moDownCount" class="market-overview__value market-overview__value--down">--</span>
+              </div>
+              <div class="market-overview__item">
+                <span class="market-overview__label">平盘家数</span>
+                <span id="moFlatCount" class="market-overview__value">--</span>
+              </div>
+              <div class="market-overview__divider"></div>
+              <div class="market-overview__item">
+                <span class="market-overview__label">沪市成交额</span>
+                <span id="moShAmount" class="market-overview__value">--</span>
+              </div>
+              <div class="market-overview__item">
+                <span class="market-overview__label">深市成交额</span>
+                <span id="moSzAmount" class="market-overview__value">--</span>
+              </div>
+              <div class="market-overview__item">
+                <span class="market-overview__label">总成交额</span>
+                <span id="moTotalAmount" class="market-overview__value market-overview__value--lg">--</span>
+              </div>
+              <div class="market-overview__item">
+                <span class="market-overview__label">预计收盘</span>
+                <span id="moEstCloseAmount" class="market-overview__value">--</span>
+              </div>
+            </div>
           </article>
 
           <article class="panel">

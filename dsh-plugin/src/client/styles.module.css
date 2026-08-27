@@ -119,6 +119,12 @@
   font-size: 11px;
   margin-left: 2px;
 }
+.strategyInfo {
+  opacity: 0.5;
+  font-weight: 400;
+  font-size: 10px;
+  margin-left: 4px;
+}
 
 /* Stock row. */
 .stockRow {
@@ -141,6 +147,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.stockMark {
+  display: inline-block;
+  width: 14px;
+  flex-shrink: 0;
 }
 .stockCode {
   opacity: 0.5;
@@ -170,9 +181,10 @@
 .level1 { padding-left: 28px; }
 .level2 { padding-left: 40px; }
 
-/* Up = red, down = green (China convention), flat = neutral. */
-.up { color: #e02e24; }
-.down { color: #2e9e4f; }
+/* Low-key up/down colors (direction stays visible via +/- signs and the
+ * minute chart line); intentionally not loud. */
+.up { color: #8a8a8a; }
+.down { color: #8a8a8a; }
 .flat { color: inherit; opacity: 0.8; }
 
 /* Mark badges. */
@@ -387,4 +399,34 @@
 }
 .dropGroup {
   background: rgba(46, 107, 214, 0.15);
+}
+
+/* Market overview panel. */
+.marketOverview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+}
+.moRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.moItem {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+.moLabel {
+  opacity: 0.6;
+  font-size: 10px;
+}
+.moValue {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
 }

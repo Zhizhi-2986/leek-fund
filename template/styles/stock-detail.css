@@ -72,7 +72,7 @@ button {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 h1,
@@ -93,8 +93,113 @@ h2 {
   font-size: 12px;
 }
 
+/* ── 价格信息栏 ── */
+
+.price-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  background: #282c34;
+  border: 1px solid #3a414d;
+  border-radius: 6px;
+  flex-wrap: wrap;
+}
+
+.price-bar__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 50px;
+}
+
+.price-bar__label {
+  color: #8993a1;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.price-bar__value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.price-bar__value--lg {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.price-bar__value--up {
+  color: #e06c75;
+}
+
+.price-bar__value--down {
+  color: #98c379;
+}
+
+.price-bar__divider {
+  width: 1px;
+  height: 32px;
+  background: #3a414d;
+  flex-shrink: 0;
+}
+
+/* ── 大盘概况 ── */
+
+.market-overview {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.market-overview__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 60px;
+}
+
+.market-overview__label {
+  color: #8993a1;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.market-overview__value {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-overview__value--lg {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.market-overview__value--up {
+  color: #e06c75;
+}
+
+.market-overview__value--down {
+  color: #98c379;
+}
+
+.market-overview__divider {
+  width: 1px;
+  height: 28px;
+  background: #3a414d;
+  flex-shrink: 0;
+}
+
+/* ── 通用 ── */
+
 .message {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   padding: 10px;
   border: 1px solid #4a5260;
   border-radius: 4px;
@@ -137,11 +242,48 @@ canvas {
 }
 
 #dailyKChart {
-  height: 360px;
+  height: 320px;
+}
+
+.ma-values {
+  display: flex;
+  gap: 18px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #20242b;
+  border: 1px solid #303743;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.ma-values .ma-item {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+}
+
+.ma-values .ma-label {
+  color: #8993a1;
+}
+
+.ma-values .ma-value {
+  font-weight: 600;
+}
+
+.ma-values .ma-value.ma5 {
+  color: #f1c40f;
+}
+
+.ma-values .ma-value.ma10 {
+  color: #e67e22;
+}
+
+.ma-values .ma-value.ma20 {
+  color: #9b59b6;
 }
 
 #minuteChart {
-  height: 260px;
+  height: 300px;
 }
 
 table {
