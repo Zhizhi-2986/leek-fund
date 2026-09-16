@@ -7,6 +7,7 @@
  * compatible with the VSCode LeekFund extension.
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Category, Group, State } from './types.js'
 
@@ -200,13 +201,12 @@ async function rmQuiet(path: string): Promise<void> {
   }
 }
 
-/** Resolve the state file path: explicit `dataPath` wins, then
- * `$DSH_HOME/leek-fund/state.json`, then a local fallback directory. */
+/** Resolve the state file path. The plugin runtime calls this without a
+ * parameter so state lands under `~/.dsh/leek-fund/state.json`; the parameter
+ * exists for tests and direct store construction. */
 export function resolveStatePath(dataPath?: string): string {
   if (dataPath) return dataPath
-  const home = process.env.DSH_HOME
-  if (home) return join(home, 'leek-fund', 'state.json')
-  return join(process.cwd(), '.dsh-leek-fund', 'state.json')
+  return join(homedir(), '.dsh', 'leek-fund', 'state.json')
 }
 
 export interface StateStore {

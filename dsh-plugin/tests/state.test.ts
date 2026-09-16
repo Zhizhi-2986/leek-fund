@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   addStock,
@@ -15,6 +15,7 @@ import {
   normalizeState,
   removeStock,
   renameGroup,
+  resolveStatePath,
   setMark,
 } from '../src/state.js'
 
@@ -214,6 +215,10 @@ describe('marks and watchlist mutations', () => {
 })
 
 describe('state store persistence', () => {
+  it('resolves the default state path under the user DSH home', () => {
+    assert.equal(resolveStatePath(), join(homedir(), '.dsh', 'leek-fund', 'state.json'))
+  })
+
   it('saves and reloads state atomically', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'leek-fund-test-'))
     try {

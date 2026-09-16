@@ -20,6 +20,13 @@ const REFRESH_MS = 2000
 /** Matches the server-side constant used for the auto-populated strategy group. */
 const STRATEGY_GROUP_NAME = '策略选股'
 
+/**
+ * Expanded group keys per tab id: the official right Sidebar keeps no per-tab
+ * metadata, and a docked body unmounts while another tab of its pane is active,
+ * so the tree parks its expansion set here for as long as the tab lives.
+ */
+const expandedByTab = new Map<string, string[]>()
+
 type StockListKey = 'holding' | 'focus' | 'watch' | 'ungroupped' | `group:${string}`
 
 interface StockDrag {
@@ -126,19 +133,16 @@ function readDrag(event: React.DragEvent): DragPayload | undefined {
 }
 
 export function StockTreeView({
+  tabId,
   visible,
-  tab,
-  ctx,
 }: {
-  sessionId: string
+  tabId: string
   visible: boolean
-  tab: { id: string; meta?: unknown }
-  ctx: { betterSidebar: { updateTab(tabId: string, patch: { meta?: unknown }): void } }
 }): JSX.Element {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(
-    () => new Set((tab.meta as { expanded?: string[] } | undefined)?.expanded ?? [])
+    () => new Set(expandedByTab.get(tabId) ?? [])
   )
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -174,14 +178,11 @@ export function StockTreeView({
     }
   }, [visible, load])
 
-  // Persist the expansion set on the tab instance so switching sessions
-  // restores each conversation's own collapsed/expanded state.
+  // Keep the expansion set beside the tab: the docked body unmounts while
+  // another tab of the pane is active, the tab record does not.
   useEffect(() => {
-    ctx.betterSidebar.updateTab(tab.id, {
-      meta: { ...(tab.meta as Record<string, unknown> | undefined), expanded: [...expanded] },
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, tab.id, ctx])
+    expandedByTab.set(tabId, [...expanded])
+  }, [expanded, tabId])
 
   // Log menu state changes for debugging.
   useEffect(() => {

@@ -140,8 +140,8 @@ export async function fetchTencentMinute(code: string, timeoutMs = 8000): Promis
     // Indices (1-indexed):
     //   1  name
     //   4  yestclose / preclose
-    //  47  limit-up price
-    //  48  limit-down price
+    //  48  limit-up price
+    //  49  limit-down price
     const qt = (stockData.qt as Record<string, unknown>) ?? {}
     const qtArr = qt[code] as string[] | undefined
     let yestclose = 0
@@ -149,12 +149,12 @@ export async function fetchTencentMinute(code: string, timeoutMs = 8000): Promis
     let limitUp = 0
     let limitDown = 0
     let name = ''
-    if (Array.isArray(qtArr) && qtArr.length >= 48) {
+    if (Array.isArray(qtArr) && qtArr.length >= 49) {
       name = qtArr[1] ?? ''
       yestclose = Number(qtArr[4]) || 0
       open = Number(qtArr[5]) || 0
-      limitUp = Number(qtArr[46]) || 0
-      limitDown = Number(qtArr[47]) || 0
+      limitUp = Number(qtArr[47]) || 0
+      limitDown = Number(qtArr[48]) || 0
     }
 
     // --- Parse minute data ---
@@ -164,35 +164,41 @@ export async function fetchTencentMinute(code: string, timeoutMs = 8000): Promis
 
     const rawArray = innerData.data as string[] | undefined
     if (!Array.isArray(rawArray) || rawArray.length === 0) {
-      return { points: [], yestclose, limitUp, limitDown, name }
+      return { points: [], yestclose, open, limitUp, limitDown, name }
     }
 
     const points: MinutePoint[] = []
-    let vwapSum = 0  // Σ(price × volume)
-    let vwapVol = 0  // Σ(volume)
+    let vwapSum = 0    // Σ(amount) — actual turnover (元)
+    let vwapShares = 0 // Σ(shares) — cumulative shares (股)
     for (const entry of rawArray) {
       // Format: "HHMM price volume amount"
+      //   price  = minute close price (元/股)
+      //   volume = trading volume in 手 (lots), 1 lot = 100 shares
+      //   amount = actual turnover (元)
       const parts = entry.split(' ')
       if (parts.length < 4) continue
       const rawTime = parts[0].trim()
       const price = Number(parts[1]) || 0
-      const volume = Number(parts[2]) || 0
+      const volume = Number(parts[2]) || 0  // 手 (lots)
+      const amount = Number(parts[3]) || 0  // 元
       if (!rawTime || price <= 0) continue
 
       // HHMM -> HH:mm
       const time = rawTime.length === 4
         ? `${rawTime.slice(0, 2)}:${rawTime.slice(2)}`
         : rawTime
-      vwapSum += price * volume
-      vwapVol += volume
+      vwapSum += amount
+      vwapShares += volume * 100  // 手 → 股
 
       points.push({
         time,
         price,
         volume,
-        // VWAP = Σ(price × volume) / Σ(volume) — unit-agnostic,
-        // correct whether volume is in shares or lots.
-        avgPrice: vwapVol > 0 ? vwapSum / vwapVol : price,
+        // VWAP = Σ(amount) / Σ(shares) — uses the actual turnover amount
+        // from the API rather than price × volume, matching mainstream
+        // Chinese stock software (同花顺, 东方财富, etc.).
+        // Note: API volume is in 手 (lots), converted to 股 (shares) ×100.
+        avgPrice: vwapShares > 0 ? vwapSum / vwapShares : price,
       })
     }
 
@@ -232,22 +238,25 @@ export async function fetchEastmoneyMinute(code: string, timeoutMs = 8000): Prom
 
   const points: MinutePoint[] = []
   let vwapSum = 0
-  let vwapVol = 0
+  let vwapShares = 0
   for (const line of klines) {
+    // Eastmoney kline format (fields2=f51,f52,f53,f54,f55,f56,f57,f58):
+    //   date,open,close,high,low,volume(手),amount(元),...
     const parts = line.split(',')
-    if (parts.length < 6) continue
+    if (parts.length < 7) continue
     const time = parts[0].split(' ')[1] ?? ''
     const price = Number(parts[2]) || 0
-    const volume = Number(parts[5]) || 0
+    const volume = Number(parts[5]) || 0  // 手 (lots)
+    const amount = Number(parts[6]) || 0  // 元
     if (!time || price <= 0) continue
-    vwapSum += price * volume
-    vwapVol += volume
+    vwapSum += amount
+    vwapShares += volume * 100  // 手 → 股
     points.push({
       time,
       price,
       volume,
-      // VWAP = Σ(price × volume) / Σ(volume) — unit-agnostic.
-      avgPrice: vwapVol > 0 ? vwapSum / vwapVol : price,
+      // VWAP = Σ(amount) / Σ(shares) — uses actual turnover amount.
+      avgPrice: vwapShares > 0 ? vwapSum / vwapShares : price,
     })
   }
   return points
@@ -378,6 +387,7 @@ export async function fetchStockDetail(
     code,
     name: name || quote?.name || code,
     price: latest,
+    open: tencent.open || quote?.open || 0,
     high,
     low,
     yestclose,
@@ -400,7 +410,7 @@ export async function fetchStockDetail(
 
 /**
  * Fetch limit-up / limit-down prices from Tencent realtime quote (fields
- * 47/48). Used only when the primary Tencent minute API failed, as a
+ * 48/49). Used only when the primary Tencent minute API failed, as a
  * companion to the Eastmoney fallback.
  */
 async function fetchLimitPricesFromQt(code: string, timeoutMs = 8000): Promise<{ limitUp: number; limitDown: number }> {
@@ -431,8 +441,8 @@ async function fetchLimitPricesFromQt(code: string, timeoutMs = 8000): Promise<{
       const closeQuote = text.indexOf('"', openQuote + 1)
       if (closeQuote < 0) return result
       const fields = text.slice(openQuote + 1, closeQuote).split('~')
-      result.limitUp = Number(fields[46]) || 0
-      result.limitDown = Number(fields[47]) || 0
+      result.limitUp = Number(fields[47]) || 0
+      result.limitDown = Number(fields[48]) || 0
     } finally {
       clearTimeout(timer)
     }

@@ -1,15 +1,22 @@
 # Development patch layer for dsh-leek-fund.
 #
-# Load the plugin from this checkout's TypeScript source without installing the
-# bundle:
+# Load the plugin from this checkout's built bundle without installing it into a
+# profile:
 #
+#   npm run bundle                                                  # tsdown first
 #   dsh web --patch /absolute/path/to/leek-fund/dsh-plugin/cordis.dev.yml
 #
-# The plugin row must resolve to an absolute path (Loader resolves module paths
-# against the profile directory, not against this patch file). `$LEEK_FUND_ROOT`
-# below is a placeholder: replace it with the absolute path of this repository,
-# or run `dsh web --patch "$(pwd)/dsh-plugin/cordis.dev.yml"` from the repo root
-# after replacing the placeholder with the absolute path.
+# `./lib/index.js` is anchored to THIS file by the CLI (relative `name` entries
+# in a patch list resolve against the patch's own directory), so the file needs
+# no absolute path and no placeholder. Keep `--patch` right after `web`, before
+# any app flag: `dsh web --port 3199 --patch …` is rejected as an unknown option,
+# because the `web` command passes unknown options straight to the app.
+#
+# The client half is always served from `lib/client.js`, so a change under
+# `src/client/**` needs `npm run bundle` too. Loading from `src/index.ts`
+# instead would need a tsx loader (`src/**` imports `./api.js` while only
+# `.ts` sources exist) — `pnpm dsh` from the harness checkout has one
+# preloaded; the plain published CLI needs `NODE_OPTIONS="--import tsx"`.
 - insert:
     - id: leek-fund
-      name: $LEEK_FUND_ROOT/dsh-plugin/src/index.ts
+      name: './lib/index.js'

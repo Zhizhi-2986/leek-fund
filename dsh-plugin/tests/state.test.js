@@ -189,6 +189,9 @@ const state_js_1 = require("../src/state.js");
     });
 });
 (0, node_test_1.describe)('state store persistence', () => {
+    (0, node_test_1.it)('resolves the default state path under the user DSH home', () => {
+        strict_1.default.equal((0, state_js_1.resolveStatePath)(), (0, node_path_1.join)((0, node_os_1.homedir)(), '.dsh', 'leek-fund', 'state.json'));
+    });
     (0, node_test_1.it)('saves and reloads state atomically', () => __awaiter(void 0, void 0, void 0, function* () {
         const dir = yield (0, promises_1.mkdtemp)((0, node_path_1.join)((0, node_os_1.tmpdir)(), 'leek-fund-test-'));
         try {

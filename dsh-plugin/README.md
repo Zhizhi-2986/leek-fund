@@ -22,21 +22,28 @@ dsh plugin --profile <name> remove dsh-leek-fund
 
 ### 本地开发加载
 
+仓库内已备好 dev overlay（`cordis.dev.yml`，指向构建产物 `./lib/index.js`；patch 里的相对 `name` 由 CLI 锚定到 patch 文件所在目录，因此无需绝对路径或占位符）：
+
 ```sh
+cd dsh-plugin
+npm run bundle                     # tsdown -> lib/index.js（host）+ lib/client.js（浏览器端）
+
 dsh web --patch /绝对路径/leek-fund/dsh-plugin/cordis.dev.yml
 ```
 
-> `cordis.dev.yml` 中的插件行 `name` 必须指向**绝对路径**（Loader 相对 profile 目录解析模块路径）。将文件中的 `$LEEK_FUND_ROOT` 替换为仓库绝对路径，或在仓库根执行 `dsh web --patch "$(pwd)/dsh-plugin/cordis.dev.yml"`（同样需先替换占位符）。
+两个容易踩的点：
 
-修改源码后重新构建：`npm run build`（bundle 安装模式），或直接重启 `dsh web --patch ...`（源码加载模式）。
+- `--patch` 必须写在 `web`（或 `--profile <name>`）之后、在透传给 app 的参数（`--port`、`--no-open` …）**之前**——`web` 子命令开了 `passThroughOptions`，一旦出现 `--port` 这类参数，后面的 `--patch` 就不再被解析（报 `unknown option '--patch'`）。正确写法：`dsh web --patch <file> --port 3199`。
+- **客户端 bundle 始终取自 `lib/client.js`**，所以改动 `src/client/**` 后必须重新 `npm run bundle`；改 host 源码若想免构建，可以从 `src/index.ts` 直接加载，但 `src/**` 里的 `import './api.js'` 是 ESM `.js` 说明符指向 `.ts` 源文件，Node 自身解析不了，需要 tsx 加载器：仓库根的 `pnpm dsh`（`node --import tsx/esm apps/cli/src/bin.ts`）已预载；用已发布的 `dsh` CLI 则写 `NODE_OPTIONS="--import tsx" dsh web --patch <指向 src/index.ts 的 patch>`（缺 tsx 时会以 `Cannot find module '.../src/api.js'` 启动失败）。
+
+`npm run build` 会先跑 `tsc -p tsconfig.build.json` 产出 `lib/types/**`，仓库内任何类型错误都会让它在中途退出；只要 bundle 时用 `npm run bundle` 即可绕过。
 
 ## 配置
 
-通过 `cordis.yml` 中插件行的 `config` 覆盖（bundle 模式下可在 profile 的 `cordis.patch.yml` 覆盖）：
+请求超时时间可通过 `cordis.yml` 中插件行的 `config` 覆盖（bundle 模式下可在 profile 的 `cordis.patch.yml` 覆盖）：
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `dataPath` | string | `$DSH_HOME/leek-fund/state.json` | 状态文件绝对路径 |
 | `timeoutMs` | number | `8000` | 行情/搜索请求超时（毫秒） |
 
 ```yaml
@@ -44,7 +51,6 @@ dsh web --patch /绝对路径/leek-fund/dsh-plugin/cordis.dev.yml
     - id: leek-fund
       name: dsh-leek-fund
       config:
-        dataPath: /Users/me/.dsh/leek-fund/state.json
         timeoutMs: 10000
 ```
 
@@ -64,7 +70,7 @@ dsh web --patch /绝对路径/leek-fund/dsh-plugin/cordis.dev.yml
 
 ## 数据与持久化
 
-- 状态文件默认 `$DSH_HOME/leek-fund/state.json`（JSON，原子写盘）。
+- 状态文件默认 `~/.dsh/leek-fund/state.json`（JSON，原子写盘）。
 - 自选股全集、一级/二级分组、持仓/关注标记、状态栏股票子集均持久化。
 - 分组约束：最多两级、同市场、id 唯一；删除分组保留股票。
 - 未分组且无标记的 A 股自选会自动归入"关注"（与 Hermes 版行为一致）。
@@ -82,9 +88,19 @@ npm run build      # tsc -> lib/
 
 `@deepseek-ai/*` 为 DSH 内置包（peerDependencies），开发时从 DSH 安装目录解析；未安装 DSH 时，将 DSH 安装的 `$DSH_HOME/profiles/node_modules/@deepseek-ai` 符号链接到 `dsh-plugin/node_modules/@deepseek-ai` 即可本地开发。
 
-## 行情 Tab（better-sidebar）
+## 行情 Tab（官方右侧 Sidebar）
 
-安装并重启后，硬刷新浏览器（Cmd/Ctrl+Shift+R），在 dsh-sidebar 右侧栏的 `+` 菜单中找到「行情」tab（与 explorer / 终端 / Git 同级）：
+「行情」以官方右侧 Sidebar 的 tab 类型（`kind: leek-fund`）注册，与内置的 Files / 文本预览同一套两阶段扩展点（`ctx.sidebarRightTabs` + `sidebar.right.pane.tab` slot），不依赖任何第三方侧边栏插件。
+
+安装并重启后，硬刷新浏览器（Cmd/Ctrl+Shift+R）：
+
+1. 在会话头部点开右侧栏（展开按钮），或直接展开已打开的右栏。
+2. 点 tab 条上的 `+`（新增 tab）打开引导页。
+3. 在引导页点「行情」入口框——该 tab 就地替换引导页，可停靠、分栏、浮出、关闭。
+
+> 官方规则：右栏默认页由已注册的引导入口数决定——只有一个入口时直接打开它，多个入口时打开引导页。插件加载后入口变成两个（Files、行情），因此新会话的右栏默认显示引导页（点 Files 立即进入文件树）。
+
+展开后：
 
 - **股票树**：只展示 A 股分类，顺序为持仓股、关注（即未分组，所有不在自定义分组中的 A 股）、自定义分组（一级/二级，二级缩进）；添加的股票自动进入关注。
 - **实时行情**：每 2 秒刷新（tab 不可见时暂停）；上涨红色、下跌绿色（低强度）；ETF 现价三位小数截断。
@@ -93,4 +109,4 @@ npm run build      # tsc -> lib/
 - **拖动排序**：股票在组内/未分组拖拽排序、拖到分组标题跨组移动；持仓/关注列表各自独立排序；分组在同级范围内排序。拖动成功静默，失败显示错误。
 - **顶部平铺条**：固定指数（上证指数、创业板指、科创综指、日经 225、韩国 KOSPI）与加入平铺条的股票平铺展示，2 秒刷新。
 
-> 前置：需要安装 dsh-sidebar（`dsh plugin --profile web add dsh-sidebar@latest` 或本地 link）。未安装时插件照常加载，仅不注册 tab。
+> 前置：DSH 自带 `@deepseek-ai/dsh-client-ui-sidebar-right`（`@deepseek-ai/dsh-web-app` bundle 内）。缺失时插件照常加载，仅不注册 tab。展开状态按 tab 保存在浏览器内存中：切换 tab 后切回仍保持，tab 关闭或刷新页面即丢失（官方右栏的布局本就不跨刷新持久化）。

@@ -31,18 +31,22 @@ const NODE_BUILTINS = new Set([
   ...builtinModules.map(id => `node:${id}`),
 ])
 
-/** Module specifiers the web shell shares into the frozen module table. */
+/**
+ * Module specifiers the web shell shares into the frozen module table: the
+ * official PLATFORM_MODULES seed list (packages/client/web/src/platform.ts).
+ * The two must stay in step — a specifier the shell does not seed throws at
+ * runtime in the module loader.
+ */
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
   'react-dom',
   'react-dom/client',
-  'cordis',
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-schema-form',
-  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
 /** Wire/type layers a client bundle may inline (browser-safe, no identity). */

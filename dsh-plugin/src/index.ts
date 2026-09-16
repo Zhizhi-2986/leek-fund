@@ -30,22 +30,18 @@ declare module '@deepseek-ai/cordis' {
 export const name = 'leek-fund'
 
 export interface Config {
-  /** Absolute path of the JSON state file. Defaults to
-   * `$DSH_HOME/leek-fund/state.json` (or `./.dsh-leek-fund/state.json`). */
-  dataPath?: string
   /** Timeout for market data / search requests, in milliseconds. */
   timeoutMs?: number
 }
 
 export const Config: Schema<Config> = Schema.object({
-  dataPath: Schema.string(),
   timeoutMs: Schema.number().default(8000),
 })
 
 export const inject = ['tools', 'webServer']
 
 export function apply(ctx: Context, config: Config) {
-  const store = createStateStore(config.dataPath)
+  const store = createStateStore()
   const timeoutMs = config.timeoutMs ?? 8000
   registerTools(ctx, { store, timeoutMs })
 
