@@ -13,12 +13,10 @@ import { StockDetail } from './StockDetail.js'
 import { CollapseAllIcon, PlusIcon, RefreshIcon } from './icons.js'
 import { SearchDialog } from './SearchDialog.js'
 import { TopTicker } from './TopTicker.js'
-import type { Group, Quote } from './types.js'
+import type { Group, Quote, SpeedRankingItem } from './types.js'
 import s from './styles.module.css'
 
 const REFRESH_MS = 2000
-/** Matches the server-side constant used for the auto-populated strategy group. */
-const STRATEGY_GROUP_NAME = '策略选股'
 
 /**
  * Expanded group keys per tab id: the official right Sidebar keeps no per-tab
@@ -95,30 +93,6 @@ function summarize(codes: string[], quotes: Map<string, Quote>): string {
     else flat += 1
   }
   return `↑${up} ↓${down} =${flat}`
-}
-
-/** Format an ISO timestamp into a short relative or absolute time string. */
-function formatStrategyTime(iso: string): string {
-  try {
-    const then = new Date(iso)
-    if (Number.isNaN(then.getTime())) return ''
-    const now = Date.now()
-    const diffMs = now - then.getTime()
-    // Less than 1 minute
-    if (diffMs < 60_000) return '刚刚'
-    // Less than 1 hour
-    if (diffMs < 3_600_000) return `${Math.floor(diffMs / 60_000)} 分钟前`
-    // Less than 6 hours
-    if (diffMs < 21_600_000) return `${Math.floor(diffMs / 3_600_000)} 小时前`
-    // Show date
-    const month = String(then.getMonth() + 1).padStart(2, '0')
-    const day = String(then.getDate()).padStart(2, '0')
-    const hour = String(then.getHours()).padStart(2, '0')
-    const min = String(then.getMinutes()).padStart(2, '0')
-    return `${month}-${day} ${hour}:${min}`
-  } catch {
-    return ''
-  }
 }
 
 /** Read the drag payload synchronously (native event lifetime rules). */
@@ -482,6 +456,24 @@ export function StockTreeView({
     )
   }
 
+  function renderSpeedRankingRow(item: SpeedRankingItem, index: number): JSX.Element {
+    const line = quoteLine(item)
+    return (
+      <div key={item.code} className={`${s.stockRow} ${s.level1}`}>
+        <span className={`${s.stockMark} ${line.cls}`}>{index + 1}</span>
+        <span className={s.stockName}>{item.name}</span>
+        <span className={s.stockSector} title={`板块: ${item.sector || '未知'}`}>
+          {item.sector || '--'}
+        </span>
+        <span className={s.stockCode}>{item.code}</span>
+        <span className={s.stockQuote}>
+          <span className={`${s.stockPrice} ${line.cls}`}>{line.price}</span>
+          <span className={`${s.stockPercent} ${line.cls}`}>{line.percent}</span>
+        </span>
+      </div>
+    )
+  }
+
   function renderGroup(group: Group): JSX.Element {
     const children = tree?.childrenOf(group.id) ?? []
     const directCodes = group.stockCodes.filter((code) => categoryOf(code) === 'A')
@@ -526,11 +518,6 @@ export function StockTreeView({
             ▶
           </span>
           <span>{group.name}</span>
-          {group.name === STRATEGY_GROUP_NAME && snapshot?.state.strategyUpdatedAt && (
-            <span className={s.strategyInfo}>
-              {formatStrategyTime(snapshot.state.strategyUpdatedAt)}
-            </span>
-          )}
           <span className={s.groupSummary}>{summary}</span>
         </div>
         {isOpen && (
@@ -631,6 +618,15 @@ export function StockTreeView({
             </div>
             {expanded.has('builtin:watch') && tree.ungroupped.map((code) => renderStockRow(code, 'ungroupped', 1))}
             {tree.topGroups.map((group) => renderGroup(group))}
+            <div
+              className={`${s.groupTitle} ${s.level0}`}
+              onClick={() => toggleKey('builtin:speed-ranking')}
+            >
+              <span className={`${s.caret} ${expanded.has('builtin:speed-ranking') ? s.caretOpen : ''}`}>▶</span>
+              <span>涨速榜</span>
+              <span className={s.groupSummary}>{(snapshot?.speedRanking ?? []).length} 条</span>
+            </div>
+            {expanded.has('builtin:speed-ranking') && (snapshot?.speedRanking ?? []).map(renderSpeedRankingRow)}
           </>
         )}
       </div>
@@ -672,4 +668,3 @@ export function StockTreeView({
     </div>
   )
 }
-

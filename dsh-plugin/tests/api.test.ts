@@ -175,7 +175,7 @@ describe('reorder endpoint', () => {
       assert.deepEqual((await deps.store.load()).groups[0].stockCodes, ['sh600001', 'sh600000'])
     }))
 
-  it('rejects a cross-market stock reorder', () =>
+  it('rejects a reorder for a code not in the watchlist', () =>
     withStore(async (deps) => {
       await handleApiRequest(deps, mockReq({ op: 'add', args: { code: 'hk00700' } }), mockRes().res, '/leek-fund/api/mutate')
       await handleApiRequest(deps, mockReq({ op: 'groupCreate', args: { name: 'A股组' } }), mockRes().res, '/leek-fund/api/mutate')

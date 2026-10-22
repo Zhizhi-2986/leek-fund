@@ -4,8 +4,8 @@
  * the `/leek-fund/api` prefix; the client half fetches it from the browser.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { fetchStockDetail, fetchMarketOverview } from './detail.js'
-import { fetchQuotes } from './quote.js'
+import { fetchStockDetail } from './detail.js'
+import { fetchQuotes, fetchSpeedRanking } from './quote.js'
 import { searchAStocks } from './search.js'
 import {
   addStock,
@@ -119,7 +119,7 @@ function mutateOp(state: State, op: string, args: Record<string, unknown>): Muta
       return removeStock(state, requireString(args.code, 'code'))
     case 'groupCreate': {
       const category = asOptionalString(args.category) ?? 'A'
-      if (category !== 'A' && category !== 'HK' && category !== 'US') {
+      if (category !== 'A') {
         return { ok: false, error: `无效市场: ${category}`, state }
       }
       return createGroup(state, requireString(args.name, 'name'), category, asOptionalString(args.parentId))
@@ -159,18 +159,20 @@ function asOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined
 }
 
-/** Snapshot for the sidebar: A-share quotes + top-ticker quotes + full state. */
+/** Snapshot for the sidebar: A-share quotes, speed ranking, top-ticker quotes and full state. */
 export async function buildSnapshot(deps: ApiDeps): Promise<unknown> {
   const state = await deps.store.load()
   const aStocks = state.stocks.filter((code) => categoryOf(code) === 'A')
   const tickerCodes = [...DEFAULT_INDEX_CODES, ...state.statusBarStockCodes]
-  const [quotes, indexQuotes] = await Promise.all([
+  const [quotes, indexQuotes, speedRanking] = await Promise.all([
     fetchQuotes(aStocks, deps.timeoutMs),
     fetchQuotes(tickerCodes, deps.timeoutMs),
+    fetchSpeedRanking(20, deps.timeoutMs),
   ])
   return {
     quotes: [...quotes.values()],
     indexQuotes: [...indexQuotes.values()],
+    speedRanking,
     state: {
       stocks: state.stocks,
       groups: state.groups,
@@ -178,8 +180,6 @@ export async function buildSnapshot(deps: ApiDeps): Promise<unknown> {
       watchCodes: state.watchCodes,
       focusCodes: state.focusCodes,
       statusBarStockCodes: state.statusBarStockCodes,
-      strategyUpdatedAt: state.strategyUpdatedAt,
-      strategyMatchCount: state.strategyMatchCount,
     },
   }
 }
@@ -213,9 +213,6 @@ export async function handleApiRequest(
         return
       case 'quoteDetail':
         writeOk(res, await fetchDetailCached(requireString(payload.code, 'code').toLowerCase(), deps))
-        return
-      case 'marketOverview':
-        writeOk(res, await fetchMarketOverview(deps.timeoutMs))
         return
       case 'mutate': {
         const op = requireString(payload.op, 'op')

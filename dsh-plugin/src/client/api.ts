@@ -1,7 +1,7 @@
 /**
  * Client fetch wrapper for the host `/leek-fund/api` routes.
  */
-import type { Group, Quote, StockCandidate } from './types.js'
+import type { Group, Quote, SpeedRankingItem, StockCandidate } from './types.js'
 
 const API_BASE = '/leek-fund/api'
 
@@ -12,13 +12,12 @@ export interface SnapshotState {
   watchCodes: string[]
   focusCodes?: string[]
   statusBarStockCodes: string[]
-  strategyUpdatedAt?: string
-  strategyMatchCount?: number
 }
 
 export interface Snapshot {
   quotes: Quote[]
   indexQuotes: Quote[]
+  speedRanking: SpeedRankingItem[]
   state: SnapshotState
 }
 
@@ -61,25 +60,7 @@ export function reorder(kind: string, args: Record<string, unknown>): Promise<{ 
 }
 
 /** Market category of a code (client-side mirror; keeps the tree A-only). */
-export function categoryOf(code: string): 'A' | 'HK' | 'US' | undefined {
+export function categoryOf(code: string): 'A' | undefined {
   if (/^(sh|sz|bj)/.test(code)) return 'A'
-  if (code.startsWith('hk')) return 'HK'
-  if (code.startsWith('usr_') || code.startsWith('gb_')) return 'US'
   return undefined
-}
-
-/** 大盘实时概览 */
-export interface MarketOverview {
-  upCount: number
-  downCount: number
-  flatCount: number
-  shAmount: number
-  szAmount: number
-  totalAmount: number
-  estimatedCloseAmount: number
-  time: string
-}
-
-export function fetchMarketOverview(signal?: AbortSignal): Promise<MarketOverview> {
-  return call<MarketOverview>('marketOverview', {}, signal)
 }

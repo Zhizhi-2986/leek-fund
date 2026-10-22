@@ -51,18 +51,6 @@ export interface StockDetail {
   volumeRatio: number
 }
 
-/** 大盘实时概览 */
-export interface MarketOverview {
-  upCount: number
-  downCount: number
-  flatCount: number
-  shAmount: number
-  szAmount: number
-  totalAmount: number
-  estimatedCloseAmount: number
-  time: string
-}
-
 // ── Low-level fetch helpers ────────────────────────────────────────────
 
 async function fetchJsonOnce(url: string, timeoutMs: number, headers: Record<string, string>): Promise<unknown> {
@@ -477,100 +465,4 @@ async function fetchEastMoneyExtraQuotes(code: string, timeoutMs = 8000): Promis
   } catch {
     return result
   }
-}
-
-// ── 大盘实时概览 ─────────────────────────────────────────────────────────
-
-/**
- * 获取大盘实时涨跌家数、量能数据
- */
-export async function fetchMarketOverview(timeoutMs = 8000): Promise<MarketOverview> {
-  const defaults: MarketOverview = {
-    upCount: 0, downCount: 0, flatCount: 0,
-    shAmount: 0, szAmount: 0, totalAmount: 0, estimatedCloseAmount: 0,
-    time: '',
-  }
-  try {
-    const url = 'https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f4,f5,f6,f12,f14,f62,f64,f65,f66,f164,f169,f170&secids=1.000001,0.399001'
-    const payload = (await fetchJson(url, timeoutMs, {
-      Referer: 'http://quote.eastmoney.com/',
-    })) as { data?: { diff?: Array<Record<string, unknown>>; list?: Array<Record<string, unknown>> } }
-    const list = payload.data?.diff ?? payload.data?.list ?? []
-    if (!Array.isArray(list)) return defaults
-
-    let shAmount = 0
-    let szAmount = 0
-    let totalUp = 0
-    let totalDown = 0
-    let totalFlat = 0
-
-    for (const item of list) {
-      const code = String(item.f12 ?? '').toLowerCase()
-      const amount = Number(item.f6) || 0
-      if (code === '1.000001') {
-        shAmount = amount
-        totalUp += Number(item.f170) || 0
-        totalDown += Number(item.f169) || 0
-        totalFlat += Number(item.f164) || 0
-      }
-      if (code === '0.399001') {
-        szAmount = amount
-        totalUp += Number(item.f170) || 0
-        totalDown += Number(item.f169) || 0
-        totalFlat += Number(item.f164) || 0
-      }
-    }
-
-    const totalAmount = shAmount + szAmount
-
-    // 计算预计收盘量能
-    const now = new Date()
-    const tradingMinutes = getElapsedTradingMinutes(now)
-    const totalTradingMinutes = 240 // 9:30-11:30 (120min) + 13:00-15:00 (120min)
-    const estimatedCloseAmount =
-      tradingMinutes > 0
-        ? totalAmount * (totalTradingMinutes / tradingMinutes)
-        : totalAmount
-
-    const hh = String(now.getHours()).padStart(2, '0')
-    const mm = String(now.getMinutes()).padStart(2, '0')
-    const ss = String(now.getSeconds()).padStart(2, '0')
-
-    return {
-      upCount: totalUp,
-      downCount: totalDown,
-      flatCount: totalFlat,
-      shAmount,
-      szAmount,
-      totalAmount,
-      estimatedCloseAmount,
-      time: `${hh}:${mm}:${ss}`,
-    }
-  } catch {
-    return defaults
-  }
-}
-
-/**
- * 计算当日已过去的交易分钟数（A 股：9:30-11:30, 13:00-15:00）
- */
-function getElapsedTradingMinutes(now: Date): number {
-  const hours = now.getHours()
-  const minutes = now.getMinutes()
-  const totalMinutes = hours * 60 + minutes
-  const open1 = 9 * 60 + 30   // 9:30
-  const close1 = 11 * 60 + 30  // 11:30
-  const open2 = 13 * 60        // 13:00
-  const close2 = 15 * 60       // 15:00
-
-  if (totalMinutes < open1 || totalMinutes >= close2) {
-    return totalMinutes < open1 ? 0 : 240
-  }
-  if (totalMinutes <= close1) {
-    return totalMinutes - open1
-  }
-  if (totalMinutes < open2) {
-    return close1 - open1 // 午间休市
-  }
-  return (close1 - open1) + (totalMinutes - open2)
 }

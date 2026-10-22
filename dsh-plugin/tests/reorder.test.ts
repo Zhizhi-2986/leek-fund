@@ -11,7 +11,7 @@ import {
 } from '../src/state.js'
 
 function baseState() {
-  return normalizeState({ stocks: ['sh600000', 'sh600001', 'sh600002', 'hk00700'] })
+  return normalizeState({ stocks: ['sh600000', 'sh600001', 'sh600002'] })
 }
 
 describe('reorderStock', () => {
@@ -65,11 +65,10 @@ describe('reorderStock', () => {
     assert.deepEqual(state.stocks.slice(0, 2), ['sh600001', 'sh600000'])
   })
 
-  it('rejects a cross-market target group', () => {
+  it('rejects a target group that does not exist', () => {
     const state = baseState()
     addStock(state, 'sh600000')
-    createGroup(state, '港股组', 'HK')
-    const result = reorderStock(state, 'sh600000', state.groups[0].id)
+    const result = reorderStock(state, 'sh600000', 'no-such-group')
     assert.equal(result.ok, false)
   })
 
@@ -83,7 +82,7 @@ describe('reorderStock', () => {
     const state = baseState()
     addStock(state, 'sh600000')
     createGroup(state, '银行', 'A')
-    const result = reorderStock(state, 'sh600000', state.groups[0].id, 'hk00700')
+    const result = reorderStock(state, 'sh600000', state.groups[0].id, 'sh600002')
     assert.equal(result.ok, false)
   })
 })

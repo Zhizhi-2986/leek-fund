@@ -18,16 +18,11 @@ export const DEFAULT_STOCKS = [
   'sh000300',
   'sh000016',
   'sh000688',
-  'hk03690',
-  'hk00700',
-  'usr_ixic',
-  'usr_dji',
-  'usr_inx',
 ]
 
-export const CATEGORY_ORDER: Category[] = ['A', 'HK', 'US']
+export const CATEGORY_ORDER: Category[] = ['A']
 
-const CODE_PATTERN = /^(?:(?:sh|sz|bj)\d{6}|hk\d{5}|(?:usr_|gb_)[a-z0-9._-]+)$/i
+const CODE_PATTERN = /^(?:sh|sz|bj)\d{6}$/i
 
 export function defaultState(): State {
   return {
@@ -55,8 +50,6 @@ export function normalizeCode(value: unknown): string {
 /** Market category of one normalized code; undefined for unrecognized codes. */
 export function categoryOf(code: string): Category | undefined {
   if (/^(sh|sz|bj)/.test(code)) return 'A'
-  if (code.startsWith('hk')) return 'HK'
-  if (code.startsWith('usr_') || code.startsWith('gb_')) return 'US'
   return undefined
 }
 
@@ -480,46 +473,4 @@ export function reorderMark(
   else if (mark === 'watch') state.watchCodes = reordered
   else state.focusCodes = reordered
   return { ok: true, state }
-}
-
-// ── Strategy group helpers ───────────────────────────────────────────────
-
-/** The fixed name for the auto-populated strategy stock-picking group. */
-export const STRATEGY_GROUP_NAME = '策略选股'
-
-/** Find the strategy group in the state, or return undefined. */
-export function findStrategyGroup(state: State): Group | undefined {
-  return state.groups.find(
-    (group) => group.name === STRATEGY_GROUP_NAME && group.category === 'A',
-  )
-}
-
-/**
- * Ensure the strategy group exists. Creates it as a top-level A-share group
- * if it doesn't exist yet. Returns the group.
- */
-export function ensureStrategyGroup(state: State): Group {
-  const existing = findStrategyGroup(state)
-  if (existing) return existing
-
-  const id = `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
-  const group: Group = { id, name: STRATEGY_GROUP_NAME, category: 'A', stockCodes: [] }
-  state.groups.push(group)
-  return group
-}
-
-/**
- * Update the strategy group's stock codes and strategy metadata.
- * Returns the updated group.
- */
-export function updateStrategyGroup(
-  state: State,
-  codes: string[],
-): Group {
-  const group = ensureStrategyGroup(state)
-  // Only keep codes that exist in the watchlist
-  group.stockCodes = codes.filter((code) => state.stocks.includes(code))
-  state.strategyUpdatedAt = new Date().toISOString()
-  state.strategyMatchCount = group.stockCodes.length
-  return group
 }

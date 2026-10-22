@@ -2,20 +2,125 @@
  * Market data fetching and parsing for dsh-leek-fund.
  *
  * Field semantics are ported from the Hermes plugin backend
- * (dashboard/plugin_api.py): Sina quotes for A-shares / US stocks / global
- * indices, Tencent quotes for HK stocks, and ETF price truncation to three
- * decimals.
+ * (dashboard/plugin_api.py): Sina quotes for A-shares and global indices,
+ * Tencent speed rankings, Eastmoney industry metadata, and ETF price
+ * truncation to three decimals.
  */
-import type { Quote } from './types.js'
+import type { Quote, SpeedRankingItem } from './types.js'
 
 const SINA_QUOTE_URL = 'https://hq.sinajs.cn/list='
-const TENCENT_QUOTE_URL = 'https://qt.gtimg.cn/q='
+const TENCENT_SPEED_RANKING_URL = 'https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList'
+const EASTMONEY_BASIC_URL = 'https://datacenter-web.eastmoney.com/api/data/v1/get'
+const SECTOR_CACHE_TTL_MS = 10 * 60_000
+const EMPTY_SECTOR_CACHE_TTL_MS = 30_000
 
 const SINA_LINE_PATTERN = /^var hq_str_([^=]+)="([^"]*)";?$/gm
 
 function number(value: unknown, fallback = 0): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+interface TencentSpeedRankingRow {
+  code?: unknown
+  name?: unknown
+  zxj?: unknown // latest price
+  zdf?: unknown // daily percent
+  zd?: unknown // price change
+  speed?: unknown // five-minute speed
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function normalizeTencentCode(value: unknown): string {
+  const raw = String(value ?? '').trim().toLowerCase()
+  if (/^(sh|sz|bj)\d{6}$/.test(raw)) return raw
+  if (!/^\d{6}$/.test(raw)) return ''
+  if (raw.startsWith('6')) return `sh${raw}`
+  if (raw.startsWith('0') || raw.startsWith('3')) return `sz${raw}`
+  if (raw.startsWith('4') || raw.startsWith('8') || raw.startsWith('9')) return `bj${raw}`
+  return ''
+}
+
+function rankingRows(payload: unknown): unknown[] {
+  const data = record(record(payload)?.data)
+  return Array.isArray(data?.rank_list) ? data.rank_list : []
+}
+
+/** Parse Tencent's live A-share five-minute speed ranking. */
+export function parseTencentSpeedRanking(payload: unknown, limit = 20): SpeedRankingItem[] {
+  return rankingRows(payload)
+    .map((raw) => {
+      const row = record(raw) as TencentSpeedRankingRow | undefined
+      if (!row) return undefined
+      const code = normalizeTencentCode(row.code)
+      const name = String(row.name ?? '').trim()
+      const price = finiteNumber(row.zxj)
+      const percent = finiteNumber(row.zdf)
+      const speed = finiteNumber(row.speed)
+      const yestclose = price !== undefined && percent !== undefined && percent > -100
+        ? price / (1 + percent / 100)
+        : undefined
+      if (!code || !name || price === undefined || price <= 0 || speed === undefined || yestclose === undefined || yestclose <= 0) {
+        return undefined
+      }
+      const updown = finiteNumber(row.zd) ?? price - yestclose
+      return {
+        code,
+        name,
+        price,
+        yestclose,
+        open: price,
+        high: price,
+        low: price,
+        updown,
+        percent: percent ?? (updown / yestclose) * 100,
+        time: '',
+        available: true,
+        speed,
+        sector: '',
+      }
+    })
+    .filter((item): item is SpeedRankingItem => item !== undefined)
+    .sort((left, right) => right.speed - left.speed || left.code.localeCompare(right.code))
+    .slice(0, Math.max(0, limit))
+}
+
+function sectorFromLevel(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const levels = value.split('-').map((item) => item.trim()).filter(Boolean)
+  if (levels.length === 0) return ''
+  return levels.length > 1 ? levels[levels.length - 2] : levels[0]
+}
+
+function eastmoneySectorRows(payload: unknown): unknown[] {
+  const result = record(record(payload)?.result)
+  return Array.isArray(result?.data) ? result.data : []
+}
+
+function parseEastmoneySectors(payload: unknown): Map<string, string> {
+  const sectors = new Map<string, string>()
+  for (const raw of eastmoneySectorRows(payload)) {
+    const row = record(raw)
+    const secucode = String(row?.SECUCODE ?? '').trim().toUpperCase()
+    if (!secucode) continue
+    sectors.set(secucode, sectorFromLevel(row?.BOARD_NAME_LEVEL))
+  }
+  return sectors
+}
+
+/** Parse one Eastmoney industry hierarchy response into its sector label. */
+export function parseEastmoneySector(payload: unknown): string {
+  return parseEastmoneySectors(payload).values().next().value ?? ''
 }
 
 /** Whether a code/name pair denotes an ETF (three-decimal display rule). */
@@ -103,20 +208,6 @@ function parseSinaCn(code: string, params: string[]): Quote | undefined {
   )
 }
 
-function parseSinaUs(code: string, params: string[]): Quote | undefined {
-  if (params.length <= 26) return undefined
-  return quote(
-    code,
-    params[0],
-    number(params[1]),
-    number(params[26]),
-    number(params[5]),
-    number(params[6]),
-    number(params[7]),
-    params[3] ?? ''
-  )
-}
-
 function parseSinaGlobalIndex(code: string, params: string[]): Quote | undefined {
   if (code.startsWith('int_')) {
     if (params.length <= 3) return undefined
@@ -140,7 +231,13 @@ function parseSinaGlobalIndex(code: string, params: string[]): Quote | undefined
   )
 }
 
-async function fetchText(url: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+async function fetchText(
+  url: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  encoding = 'gb18030',
+  referer = 'http://finance.sina.com.cn/'
+): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const combined = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
@@ -149,19 +246,95 @@ async function fetchText(url: string, timeoutMs: number, signal?: AbortSignal): 
       signal: combined,
       headers: {
         Accept: '*/*',
-        Referer: 'http://finance.sina.com.cn/',
+        Referer: referer,
         'User-Agent':
           'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0 Safari/537.36',
       },
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const buffer = await response.arrayBuffer()
-    // Sina returns GB18030; Tencent HK returns GBK. Both are covered by the
-    // WHATWG encoding labels implemented by Node's full-ICU TextDecoder.
-    return new TextDecoder('gb18030').decode(buffer)
+    // Sina returns GB18030; the Tencent ranking JSON endpoint returns UTF-8.
+    // Both are supported by TextDecoder.
+    return new TextDecoder(encoding).decode(buffer)
   } finally {
     clearTimeout(timer)
   }
+}
+
+const sectorCache = new Map<string, { at: number; sector: string }>()
+let sectorWarmRequest: Promise<void> | undefined
+
+function eastmoneySecuCode(code: string): string | undefined {
+  const match = /^(sh|sz|bj)(\d{6})$/.exec(code)
+  if (!match) return undefined
+  return `${match[2]}.${match[1].toUpperCase()}`
+}
+
+function cachedSector(code: string): string {
+  const cached = sectorCache.get(code)
+  if (!cached) return ''
+  const cacheTtl = cached.sector ? SECTOR_CACHE_TTL_MS : EMPTY_SECTOR_CACHE_TTL_MS
+  return Date.now() - cached.at < cacheTtl ? cached.sector : ''
+}
+
+async function fetchEastmoneySectors(codes: string[], timeoutMs: number): Promise<void> {
+  const uniqueCodes = [...new Set(codes)]
+  const pendingCodes = uniqueCodes.filter((code) => !cachedSector(code))
+  if (pendingCodes.length === 0) return
+
+  const codePairs = pendingCodes
+    .map((code) => ({ code, secucode: eastmoneySecuCode(code) }))
+    .filter((item): item is { code: string; secucode: string } => item.secucode !== undefined)
+  if (codePairs.length === 0) return
+
+  const params = new URLSearchParams({
+    reportName: 'RPT_F10_BASIC_ORGINFO',
+    columns: 'SECUCODE,BOARD_NAME_LEVEL',
+    filter: `(SECUCODE in (${codePairs.map((item) => JSON.stringify(item.secucode)).join(',')}))`,
+    source: 'HSF10',
+    client: 'WEB',
+  })
+  let sectors = new Map<string, string>()
+  try {
+    const body = await fetchText(
+      `${EASTMONEY_BASIC_URL}?${params}`,
+      timeoutMs,
+      undefined,
+      'utf-8',
+      'https://quote.eastmoney.com/'
+    )
+    sectors = parseEastmoneySectors(JSON.parse(body) as unknown)
+  } catch {
+    // Preserve the snapshot response when the supplementary metadata source fails.
+  }
+
+  const now = Date.now()
+  for (const item of codePairs) {
+    sectorCache.set(item.code, { at: now, sector: sectors.get(item.secucode) ?? '' })
+  }
+}
+
+async function warmSectors(items: SpeedRankingItem[], timeoutMs: number): Promise<void> {
+  if (sectorWarmRequest) return sectorWarmRequest
+  const request = (async () => {
+    try {
+      await fetchEastmoneySectors(items.map((item) => item.code), timeoutMs)
+    } finally {
+      sectorWarmRequest = undefined
+    }
+  })()
+  sectorWarmRequest = request
+  return request
+}
+
+function attachSectors(
+  items: SpeedRankingItem[],
+  timeoutMs: number
+): SpeedRankingItem[] {
+  // Sector metadata is supplementary: return the ranking immediately and
+  // let the single batch background fetch populate the cache for the next poll.
+  void warmSectors(items, timeoutMs).catch(() => undefined)
+  return items.map((item) => ({ ...item, sector: cachedSector(item.code) }))
 }
 
 /** Parse a raw Sina response body into a code -> quote map. */
@@ -176,19 +349,17 @@ export function parseSinaBody(body: string): Map<string, Quote> {
       item = parseSinaGlobalIndex(rawCode, params)
     } else {
       const normalized = rawCode.toLowerCase()
-      if (!/^(?:(?:sh|sz|bj)\d{6}|hk\d{5}|(?:usr_|gb_)[a-z0-9._-]+)$/.test(normalized)) {
+      if (!/^(?:sh|sz|bj)\d{6}$/.test(normalized)) {
         continue
       }
-      item = normalized.startsWith('usr_') || normalized.startsWith('gb_')
-        ? parseSinaUs(normalized, params)
-        : parseSinaCn(normalized, params)
+      item = parseSinaCn(normalized, params)
     }
     if (item) result.set(item.code, item)
   }
   return result
 }
 
-/** Fetch Sina quotes for A-share / US / global-index codes. */
+/** Fetch Sina quotes for A-share / global-index codes. */
 export async function fetchSinaQuotes(codes: string[], timeoutMs = 8000, signal?: AbortSignal): Promise<Map<string, Quote>> {
   const requested = [...new Set(codes)].map((code) => code.replace(/\./g, '$')).join(',')
   if (!requested) return new Map()
@@ -196,38 +367,7 @@ export async function fetchSinaQuotes(codes: string[], timeoutMs = 8000, signal?
   return parseSinaBody(body)
 }
 
-/** Fetch HK quotes through the Tencent endpoint (`r_` prefixed JSON). */
-export async function fetchHkQuotes(codes: string[], timeoutMs = 8000, signal?: AbortSignal): Promise<Map<string, Quote>> {
-  const normalized = [...new Set(codes)].filter((code) => code.startsWith('hk'))
-  if (normalized.length === 0) return new Map()
-  const query = normalized.map((code) => `r_${code}`).join(',')
-  const body = await fetchText(`${TENCENT_QUOTE_URL}${query}&fmt=json`, timeoutMs, signal)
-  let payload: Record<string, string[] | undefined> = {}
-  try {
-    payload = JSON.parse(body) as Record<string, string[] | undefined>
-  } catch {
-    return new Map()
-  }
-  const result = new Map<string, Quote>()
-  for (const code of normalized) {
-    const params = payload[`r_${code}`]
-    if (!Array.isArray(params) || params.length <= 37) continue
-    const item = quote(
-      code,
-      params[1] ?? '',
-      number(params[3]),
-      number(params[4]),
-      number(params[5]),
-      number(params[33]),
-      number(params[34]),
-      params[30] ?? ''
-    )
-    if (item) result.set(code, item)
-  }
-  return result
-}
-
-/** Fetch quotes for any mix of A-share / HK / US / index codes. */
+/** Fetch quotes for any mix of A-share / index codes. */
 export async function fetchQuotes(codes: string[], timeoutMs = 8000, signal?: AbortSignal): Promise<Map<string, Quote>> {
   // Index codes (b_NKY, b_KOSPI, int_*) are case-sensitive on the Sina
   // endpoint — keep their original case; everything else is normalized.
@@ -240,11 +380,30 @@ export async function fetchQuotes(codes: string[], timeoutMs = 8000, signal?: Ab
       )
     ),
   ]
-  const [sina, hk] = await Promise.all([
-    fetchSinaQuotes(normalized.filter((code) => !code.startsWith('hk')), timeoutMs, signal),
-    fetchHkQuotes(normalized.filter((code) => code.startsWith('hk')), timeoutMs, signal),
-  ])
-  return new Map([...sina, ...hk])
+  return fetchSinaQuotes(normalized, timeoutMs, signal)
+}
+
+/** Fetch the live A-share five-minute speed ranking from Tencent. */
+export async function fetchSpeedRanking(
+  limit = 20,
+  timeoutMs = 8000,
+  signal?: AbortSignal
+): Promise<SpeedRankingItem[]> {
+  const params = new URLSearchParams({
+    board_code: 'aStock',
+    sort_type: 'speed',
+    direct: 'down',
+    offset: '0',
+    count: String(Math.max(20, limit)),
+  })
+  try {
+    const body = await fetchText(`${TENCENT_SPEED_RANKING_URL}?${params}`, timeoutMs, signal, 'utf-8')
+    const ranking = parseTencentSpeedRanking(JSON.parse(body) as unknown, limit)
+    return attachSectors(ranking, timeoutMs)
+  } catch (error) {
+    if (signal?.aborted) throw error
+    return []
+  }
 }
 
 /** Render one quote line for the model-facing text output. */

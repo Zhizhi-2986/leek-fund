@@ -7,7 +7,7 @@ import type { StockCandidate } from './types.js'
 
 const TENCENT_SEARCH_URL = 'https://proxy.finance.qq.com/ifzqgtimg/appstock/smartbox/search/get'
 
-const CODE_PATTERN = /^(?:(?:sh|sz|bj)\d{6}|hk\d{5}|(?:usr_|gb_)[a-z0-9._-]+)$/i
+const CODE_PATTERN = /^(?:sh|sz|bj)\d{6}$/i
 
 function normalizeCode(value: string): string {
   return value.trim().replace(/\$/g, '.').toLowerCase()

@@ -20,11 +20,11 @@ import {
 } from '../src/state.js'
 
 describe('normalizeCode', () => {
-  it('lowercases and canonicalizes', () => {
+  it('canonicalizes A-share codes and rejects HK/US codes', () => {
     assert.equal(normalizeCode('SH600000'), 'sh600000')
     assert.equal(normalizeCode('sh600000'), 'sh600000')
-    assert.equal(normalizeCode(' HK00700 '), 'hk00700')
-    assert.equal(normalizeCode('USR_AAPL'), 'usr_aapl')
+    assert.equal(normalizeCode(' HK00700 '), '')
+    assert.equal(normalizeCode('USR_AAPL'), '')
   })
 
   it('rejects invalid codes', () => {
@@ -36,13 +36,13 @@ describe('normalizeCode', () => {
 })
 
 describe('categoryOf', () => {
-  it('maps markets', () => {
+  it('maps only A-share codes', () => {
     assert.equal(categoryOf('sh600000'), 'A')
     assert.equal(categoryOf('sz000001'), 'A')
     assert.equal(categoryOf('bj430047'), 'A')
-    assert.equal(categoryOf('hk00700'), 'HK')
-    assert.equal(categoryOf('usr_aapl'), 'US')
-    assert.equal(categoryOf('gb_aapl'), 'US')
+    assert.equal(categoryOf('hk00700'), undefined)
+    assert.equal(categoryOf('usr_aapl'), undefined)
+    assert.equal(categoryOf('gb_aapl'), undefined)
     assert.equal(categoryOf('xxx'), undefined)
   })
 })
@@ -50,10 +50,10 @@ describe('categoryOf', () => {
 describe('normalizeState', () => {
   it('dedupes stocks and drops invalid codes', () => {
     const state = normalizeState({
-      stocks: ['sh600000', 'SH600000', 'bad', 'hk00700'],
+      stocks: ['sh600000', 'SH600000', 'bad', 'hk00700', 'usr_aapl'],
       holding_codes: ['sh600000', 'not-a-stock'],
     })
-    assert.deepEqual(state.stocks, ['sh600000', 'hk00700'])
+    assert.deepEqual(state.stocks, ['sh600000'])
     assert.deepEqual(state.holdingCodes, ['sh600000'])
   })
 
@@ -84,6 +84,23 @@ describe('normalizeState', () => {
     assert.deepEqual(state.groups[0].stockCodes, ['sh600000'])
     assert.deepEqual(state.groups[1].stockCodes, [])
   })
+
+  it('drops HK/US groups and codes on load (one-time migration)', () => {
+    const state = normalizeState({
+      stocks: ['sh600000', 'hk00700', 'usr_aapl'],
+      groups: [
+        { id: 'g1', name: '港股组', category: 'HK', stockCodes: ['hk00700'] },
+        { id: 'g2', name: '美股组', category: 'US', stock_codes: ['usr_aapl'] },
+        { id: 'g3', name: 'A股组', category: 'A', stockCodes: ['sh600000'] },
+      ],
+      holding_codes: ['hk00700'],
+      watch_codes: ['usr_aapl'],
+    })
+    assert.deepEqual(state.stocks, ['sh600000'])
+    assert.deepEqual(state.groups.map((g) => g.id), ['g3'])
+    assert.deepEqual(state.holdingCodes, [])
+    assert.deepEqual(state.watchCodes, [])
+  })
 })
 
 describe('group mutations', () => {
@@ -104,17 +121,12 @@ describe('group mutations', () => {
     assert.equal(state.groups[1].parentId, parent.id)
   })
 
-  it('rejects a third level and cross-market children', () => {
-    const state = normalizeState({ stocks: ["sh600000", "hk00700", "usr_aapl"] })
+  it('rejects a third level of groups', () => {
+    const state = normalizeState({ stocks: ["sh600000"] })
     createGroup(state, '光通信', 'A')
     createGroup(state, 'CPO', 'A', state.groups[0].id)
     const nested = createGroup(state, '子子', 'A', state.groups[1].id)
     assert.equal(nested.ok, false)
-
-    const state2 = normalizeState({ stocks: ["sh600000", "hk00700", "usr_aapl"] })
-    createGroup(state2, '港股组', 'HK')
-    const cross = createGroup(state2, 'A股子组', 'A', state2.groups[0].id)
-    assert.equal(cross.ok, false)
   })
 
   it('rejects duplicate sibling names', () => {
@@ -159,9 +171,8 @@ describe('group mutations', () => {
     assert.deepEqual(group.stockCodes, [])
   })
 
-  it('rejects moving a stock into a different-market group', () => {
-    const state = normalizeState({ stocks: ["sh600000", "hk00700", "usr_aapl"] })
-    addStock(state, 'hk00700')
+  it('rejects moving an invalid code into a group', () => {
+    const state = normalizeState({ stocks: ["sh600000"] })
     createGroup(state, 'A股组', 'A')
     const result = moveStockToGroup(state, 'hk00700', state.groups[0].id)
     assert.equal(result.ok, false)

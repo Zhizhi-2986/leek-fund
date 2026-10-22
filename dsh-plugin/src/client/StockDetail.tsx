@@ -1,12 +1,10 @@
 /**
  * Expandable stock detail: intraday minute chart (SVG) with percentage-based
  * Y-axis (±10% default, auto-switch to ±20%), volume-weighted average price,
- * 0-axis reference, MA5/MA10/MA20, and a market overview
- * panel showing up/down counts, market volume and estimated close volume.
+ * 0-axis reference and MA5/MA10/MA20 values.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { displayPrice } from '../quote.js'
-import { fetchMarketOverview, type MarketOverview } from './api.js'
 import s from './styles.module.css'
 
 export interface StockDetailData {
@@ -303,66 +301,6 @@ function MinuteChart({ detail }: { detail: StockDetailData }): JSX.Element {
   )
 }
 
-// ── MarketOverviewPanel component ──────────────────────────────────────
-
-function MarketOverviewPanel(): JSX.Element {
-  const [overview, setOverview] = useState<MarketOverview | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-
-    const load = () => {
-      fetchMarketOverview()
-        .then((data) => { if (!cancelled) setOverview(data) })
-        .catch(() => {})
-    }
-
-    load()
-    timer = setInterval(load, 30000)
-
-    return () => {
-      cancelled = true
-      if (timer) clearInterval(timer)
-    }
-  }, [])
-
-  if (!overview || (overview.upCount === 0 && overview.downCount === 0)) {
-    return <div className={s.marketOverview} />
-  }
-
-  const isUp = overview.upCount >= overview.downCount
-
-  return (
-    <div className={s.marketOverview}>
-      <div className={s.moRow}>
-        <span className={s.moItem}>
-          <span className={s.moLabel}>上涨</span>
-          <span className={`${s.moValue} ${s.up}`}>{overview.upCount}</span>
-        </span>
-        <span className={s.moItem}>
-          <span className={s.moLabel}>下跌</span>
-          <span className={`${s.moValue} ${s.down}`}>{overview.downCount}</span>
-        </span>
-        <span className={s.moItem}>
-          <span className={s.moLabel}>平盘</span>
-          <span className={s.moValue}>{overview.flatCount}</span>
-        </span>
-      </div>
-      <div className={s.moRow}>
-        <span className={s.moItem}>
-          <span className={s.moLabel}>成交额</span>
-          <span className={s.moValue}>{fmtAmount(overview.totalAmount)}</span>
-        </span>
-        <span className={s.moItem}>
-          <span className={s.moLabel}>预计收盘</span>
-          <span className={s.moValue}>{fmtAmount(overview.estimatedCloseAmount)}</span>
-        </span>
-      </div>
-    </div>
-  )
-}
-
 // ── StockDetail component ──────────────────────────────────────────────
 
 export function StockDetail({ code, name }: { code: string; name: string }): JSX.Element {
@@ -422,9 +360,6 @@ export function StockDetail({ code, name }: { code: string; name: string }): JSX
         <span>MA20 <b>{detail.ma.ma20 !== null ? displayPrice(code, name, detail.ma.ma20) : '--'}</b></span>
         <span className={s.detailHint}>5/10/20 日均线（按日收盘价）</span>
       </div>
-
-      {/* Market overview */}
-      <MarketOverviewPanel />
     </div>
   )
 }

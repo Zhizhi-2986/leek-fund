@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { displayPrice, formatPercent, isEtf, parseSinaBody } from '../src/quote.js'
+import { displayPrice, formatPercent, isEtf, parseEastmoneySector, parseSinaBody, parseTencentSpeedRanking } from '../src/quote.js'
 
 describe('isEtf', () => {
   it('recognizes ETF by code prefix', () => {
@@ -69,22 +69,6 @@ describe('parseSinaBody', () => {
     assert.equal(quote.price, 11.59)
   })
 
-  it('parses a US stock line (usr_aapl)', () => {
-    // Field layout used by the parser: 0 name, 1 price, 5 open, 6 high,
-    // 7 low, 26 yestclose, 3 time text.
-    const body =
-      'var hq_str_usr_aapl="苹果,190.50,1.20,0.63%,2024-01-02 16:00:00,191.00,192.00,189.00,' +
-      '0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,188.00";\n'
-    const quote = parseSinaBody(body).get('usr_aapl')
-    assert.ok(quote)
-    assert.equal(quote.name, '苹果')
-    assert.equal(quote.price, 190.5)
-    assert.equal(quote.yestclose, 188)
-    assert.equal(quote.open, 191)
-    assert.equal(quote.high, 192)
-    assert.equal(quote.low, 189)
-  })
-
   it('parses a global index line (b_NKY)', () => {
     const body = 'var hq_str_b_NKY="日经225,39000.00,200.00,2024-01-02,15:00:00,0,0,0,38900.00,0,39050.00,38850.00";\n'
     const quote = parseSinaBody(body).get('b_NKY')
@@ -112,5 +96,51 @@ describe('parseSinaBody', () => {
       'not a valid line\n'
     const quotes = parseSinaBody(body)
     assert.equal(quotes.size, 1)
+  })
+})
+
+describe('parseTencentSpeedRanking', () => {
+  it('filters to A shares, sorts by five-minute speed and limits the result', () => {
+    const rows = [
+      { code: 'sh600000', name: '浦发银行', zxj: 11.6, zdf: 1.75, zd: 0.2, speed: 3.2 },
+      { code: 'sz000001', name: '平安银行', zxj: 10.2, zdf: -1.2, zd: -0.12, speed: 5.8 },
+      { code: 'bj830799', name: '北交所股票', zxj: 8.8, zdf: 2.1, zd: 0.18, speed: 4.1 },
+      { code: 'A00001', name: '不是股票', zxj: 10, zdf: 1, speed: 99 },
+    ]
+    const result = parseTencentSpeedRanking({ data: { rank_list: rows } }, 3)
+    assert.deepEqual(result.map((item) => item.code), ['sz000001', 'bj830799', 'sh600000'])
+    assert.deepEqual(result.map((item) => item.speed), [5.8, 4.1, 3.2])
+    assert.equal(result[0].name, '平安银行')
+    assert.equal(result[0].available, true)
+  })
+
+  it('returns at most the requested limit for the rank_list response', () => {
+    const result = parseTencentSpeedRanking(
+      {
+        data: {
+          rank_list: [
+            { code: 'sh600000', name: '浦发银行', zxj: 11.6, zdf: 1.75, speed: 1.1 },
+            { code: 'sz000001', name: '平安银行', zxj: 10.2, zdf: 1.0, speed: 2.1 },
+          ],
+        },
+      },
+      1
+    )
+    assert.equal(result.length, 1)
+    assert.equal(result[0].code, 'sz000001')
+  })
+})
+
+describe('parseEastmoneySector', () => {
+  it('reads the industry sector from the stock metadata response', () => {
+    assert.equal(
+      parseEastmoneySector({ result: { data: [{ SECUCODE: '600152.SH', BOARD_NAME_LEVEL: '电力设备-电池-锂电池' }] } }),
+      '电池'
+    )
+    assert.equal(
+      parseEastmoneySector({ result: { data: [{ SECUCODE: '002959.SZ', BOARD_NAME_LEVEL: '家电-小家电' }] } }),
+      '家电'
+    )
+    assert.equal(parseEastmoneySector({ result: { data: [] } }), '')
   })
 })

@@ -1,7 +1,7 @@
 /** Shared types for the dsh-leek-fund plugin. */
 
-/** Stock market category used for grouping constraints. */
-export type Category = 'A' | 'HK' | 'US'
+/** Stock market category used for grouping constraints (A-share only). */
+export type Category = 'A'
 
 /** A user-defined watchlist group. At most two levels: a group with
  * `parentId` is a second-level group and must not have children. */
@@ -28,10 +28,6 @@ export interface State {
   focusCodes: string[]
   /** Subset of `stocks` pinned to the status bar (kept for VSCode parity). */
   statusBarStockCodes: string[]
-  /** ISO timestamp of the last strategy evaluation run. */
-  strategyUpdatedAt?: string
-  /** Number of stocks that matched the last strategy evaluation. */
-  strategyMatchCount?: number
 }
 
 /** One normalized market quote. */
@@ -51,6 +47,14 @@ export interface Quote {
   percent: number
   time: string
   available: boolean
+}
+
+/** One real-time A-share speed-ranking item from the market feed. */
+export interface SpeedRankingItem extends Quote {
+  /** Five-minute price speed, in percent, from the upstream f22 field. */
+  speed: number
+  /** Industry sector from Eastmoney's stock metadata. */
+  sector: string
 }
 
 /** One A-share search candidate. */

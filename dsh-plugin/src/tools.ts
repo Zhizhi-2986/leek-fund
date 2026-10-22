@@ -10,7 +10,6 @@ import { fetchQuotes, formatQuoteLine } from './quote.js'
 import { searchAStocks } from './search.js'
 import {
   addStock,
-  categoryOf,
   createGroup,
   createStateStore,
   deleteGroup,
@@ -20,11 +19,9 @@ import {
   removeStock,
   renameGroup,
   setMark,
-  updateStrategyGroup,
   type MutationResult,
   type StateStore,
 } from './state.js'
-import { evaluateBatch, STRATEGY_GROUP_NAME } from './strategy.js'
 import type { Quote, State } from './types.js'
 
 export interface ToolDeps {
@@ -100,7 +97,7 @@ export function defineTools(deps: ToolDeps) {
     defineTool({
       name: 'stock_quote',
       description:
-        '查询股票实时行情。默认查询全部自选股票；可传入指定代码（如 sh600000 浦发银行、sz000001 平安银行、hk00700 腾讯、usr_aapl 苹果、sh000001 上证指数）。返回名称、现价、涨跌幅、今开、最高、最低、昨收等。',
+        '查询股票实时行情。默认查询全部自选股票；可传入指定代码（如 sh600000 浦发银行、sz000001 平安银行、sh000001 上证指数、b_NKY 日经225）。返回名称、现价、涨跌幅、今开、最高、最低、昨收等。',
       parameters: {
         codes: {
           type: 'array',
@@ -225,9 +222,9 @@ export function defineTools(deps: ToolDeps) {
 
     defineTool({
       name: 'stock_add',
-      description: '添加股票到自选列表。代码格式：A 股 sh/sz/bj + 6 位数字，港股 hk + 5 位数字，美股 usr_ 或 gb_ 开头。',
+      description: '添加股票到自选列表。代码格式：A 股 sh/sz/bj + 6 位数字，指数 sh/sz 前缀。',
       parameters: {
-        code: { type: 'string', required: true, description: '股票代码，如 sh600000、hk00700、usr_aapl' },
+        code: { type: 'string', required: true, description: '股票代码，如 sh600000' },
         groupId: { type: 'string', description: '可选：添加到指定分组的 id（省略则放入未分组）' },
       },
       output: {
@@ -286,7 +283,7 @@ export function defineTools(deps: ToolDeps) {
         name: { type: 'string', required: true, description: '分组名称' },
         category: {
           type: 'string',
-          enum: ['A', 'HK', 'US'],
+          enum: ['A'],
           description: '分组市场，默认 A',
         },
         parentId: { type: 'string', description: '父分组 id（创建二级分组时传入）' },
@@ -444,91 +441,6 @@ export function defineTools(deps: ToolDeps) {
       async execute(args) {
         const result = await runMutation(store, (state) => setMark(state, args.code, args.mark, args.value))
         return { code: args.code, mark: args.mark, value: args.value, ok: result.ok, error: result.error }
-      },
-    }),
-
-    defineTool({
-      name: 'stock_strategy_run',
-      description:
-        '手动触发策略选股评估。扫描自选 A 股，按核心交易策略（120Min EMA20 趋势、MACD 动能、成交量放量、RSI 约束）筛选符合条件的个股，更新「策略选股」分组。',
-      parameters: {},
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            matched: { type: 'array', required: true, items: { type: 'string' }, description: '符合条件的股票代码' },
-            failed: { type: 'array', required: true, items: { type: 'string' }, description: '不符合条件的股票代码' },
-            skipped: { type: 'array', required: true, items: { type: 'string' }, description: '数据不足跳过的股票代码' },
-            evaluatedAt: { type: 'string', required: true, description: '评估时间 (ISO)' },
-            totalAStocks: { type: 'number', required: true, description: '自选 A 股总数' },
-            ok: { type: 'boolean', required: true, description: '是否成功' },
-            error: { type: 'string', description: '失败原因' },
-          },
-        },
-        render: (_args, value) => {
-          if (!value.ok) return [{ type: 'text', text: `策略选股失败: ${value.error}` }]
-          const lines = [
-            `【策略选股结果】`,
-            `评估时间: ${value.evaluatedAt}`,
-            `自选 A 股总数: ${value.totalAStocks}`,
-            `匹配: ${value.matched.length} 只`,
-            value.matched.length > 0 ? `  ${value.matched.join(', ')}` : '',
-            `不符合: ${value.failed.length} 只`,
-            `跳过(数据不足): ${value.skipped.length} 只`,
-            value.matched.length > 0
-              ? '\n已更新「策略选股」分组。'
-              : '\n当前无股票符合策略条件。',
-          ]
-          return [{ type: 'text', text: lines.filter(Boolean).join('\n') }]
-        },
-      },
-      async execute() {
-        try {
-          const state = await store.load()
-          const aStockCodes = state.stocks.filter((code) => categoryOf(code) === 'A')
-          if (aStockCodes.length === 0) {
-            return {
-              matched: [],
-              failed: [],
-              skipped: [],
-              evaluatedAt: new Date().toISOString(),
-              totalAStocks: 0,
-              ok: false,
-              error: '自选列表中没有 A 股',
-            }
-          }
-
-          const result = await evaluateBatch(aStockCodes, undefined, deps.timeoutMs)
-
-          // Persist the result to the strategy group
-          let persistError: string | undefined
-          await store.mutate((state) => {
-            updateStrategyGroup(state, result.matched)
-          }).catch((err: unknown) => {
-            persistError = String(err)
-          })
-
-          return {
-            matched: result.matched,
-            failed: result.failed,
-            skipped: result.skipped,
-            evaluatedAt: result.evaluatedAt,
-            totalAStocks: aStockCodes.length,
-            ok: !persistError,
-            error: persistError,
-          }
-        } catch (err) {
-          return {
-            matched: [],
-            failed: [],
-            skipped: [],
-            evaluatedAt: new Date().toISOString(),
-            totalAStocks: 0,
-            ok: false,
-            error: String(err),
-          }
-        }
       },
     }),
   ]
