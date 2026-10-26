@@ -9,6 +9,8 @@ import { createPortal } from 'react-dom'
 import { displayPrice, formatPercent } from '../quote.js'
 import { categoryOf, fetchSnapshot, mutate, reorder, type Snapshot } from './api.js'
 import { MoveDialog } from './MoveDialog.js'
+import { ConfirmDialog } from './ConfirmDialog.js'
+import { PromptDialog } from './PromptDialog.js'
 import { StockDetail } from './StockDetail.js'
 import { CollapseAllIcon, PlusIcon, RefreshIcon } from './icons.js'
 import { SearchDialog } from './SearchDialog.js'
@@ -56,6 +58,30 @@ interface DropHint {
   targetCode?: string
   position?: 'before' | 'after'
   groupId?: string
+}
+
+/**
+ * Group name dialog state. The browser prompt API is not supported in the DSH
+ * Desktop (Electron) client, so create / rename flows go through the in-app
+ * PromptDialog instead.
+ */
+interface GroupPrompt {
+  mode: 'create' | 'rename'
+  title: string
+  /** Parent group id for creating a second-level group (create mode). */
+  parentId?: string
+  /** Group id to rename (rename mode). */
+  groupId?: string
+  /** Current name, pre-filled (rename mode). */
+  initialValue?: string
+  placeholder?: string
+}
+
+/** Delete-group confirm dialog state (in-app, no browser confirm API). */
+interface GroupConfirm {
+  title: string
+  message: string
+  groupId: string
 }
 
 function priceClass(percent: number): string {
@@ -121,6 +147,8 @@ export function StockTreeView({
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [moveTarget, setMoveTarget] = useState<{ code: string; name: string; currentGroupId?: string } | null>(null)
+  const [groupPrompt, setGroupPrompt] = useState<GroupPrompt | null>(null)
+  const [groupConfirm, setGroupConfirm] = useState<GroupConfirm | null>(null)
   const [dropHint, setDropHint] = useState<DropHint | null>(null)
   const [dragging, setDragging] = useState<DragPayload | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -157,11 +185,6 @@ export function StockTreeView({
   useEffect(() => {
     expandedByTab.set(tabId, [...expanded])
   }, [expanded, tabId])
-
-  // Log menu state changes for debugging.
-  useEffect(() => {
-    console.log('[leek-fund] menu state:', menu ? `shown at (${menu.x}, ${menu.y}) with ${menu.items.length} items` : 'hidden')
-  }, [menu])
 
   // Close the context menu on any outside click.
   useEffect(() => {
@@ -245,7 +268,6 @@ export function StockTreeView({
       },
       { label: '删除', danger: true, action: () => void runMutate('remove', { code }) },
     ]
-    console.log('[leek-fund] right-click stock:', code, 'list:', list)
     openMenu(event.clientX, event.clientY, items)
   }
 
@@ -256,16 +278,17 @@ export function StockTreeView({
     const items: MenuItem[] = group.parentId
       ? [
           { label: '重命名', action: () => {
-            const name = window.prompt('新名称', group.name)
-            if (name && name !== group.name) void runMutate('groupRename', { id: group.id, name })
+            setGroupPrompt({ mode: 'rename', title: '重命名分组', groupId: group.id, initialValue: group.name })
           } },
           {
             label: '删除分组（保留股票）',
             danger: true,
             action: () => {
-              if (window.confirm(`删除分组「${group.name}」？组内股票将回到关注。`)) {
-                void runMutate('groupDelete', { id: group.id })
-              }
+              setGroupConfirm({
+                title: `删除分组「${group.name}」`,
+                message: '组内股票将回到关注。',
+                groupId: group.id,
+              })
             },
           },
         ]
@@ -273,25 +296,29 @@ export function StockTreeView({
       {
         label: '创建二级分组',
         action: () => {
-          const name = window.prompt('二级分组名称')
-          if (name) void runMutate('groupCreate', { name, category: group.category, parentId: group.id })
+          setGroupPrompt({
+            mode: 'create',
+            title: `在「${group.name}」下创建二级分组`,
+            parentId: group.id,
+            placeholder: '二级分组名称',
+          })
         },
       },
       { label: '重命名', action: () => {
-        const name = window.prompt('新名称', group.name)
-        if (name && name !== group.name) void runMutate('groupRename', { id: group.id, name })
+        setGroupPrompt({ mode: 'rename', title: '重命名分组', groupId: group.id, initialValue: group.name })
       } },
       {
         label: '删除分组（保留股票）',
         danger: true,
         action: () => {
-          if (window.confirm(`删除分组「${group.name}」及其二级分组？组内股票将回到关注。`)) {
-            void runMutate('groupDelete', { id: group.id })
-          }
+          setGroupConfirm({
+            title: `删除分组「${group.name}」及其二级分组`,
+            message: '组内股票将回到关注。',
+            groupId: group.id,
+          })
         },
       },
     ]
-    console.log('[leek-fund] right-click group:', group.id, group.name)
     openMenu(event.clientX, event.clientY, items)
   }
 
@@ -569,8 +596,7 @@ export function StockTreeView({
           <PlusIcon /> 添加股票
         </button>
         <button className={s.addButton} onClick={() => {
-          const name = window.prompt('分组名称')
-          if (name) void runMutate('groupCreate', { name, category: 'A' })
+          setGroupPrompt({ mode: 'create', title: '新建分组', placeholder: '分组名称' })
         }}>
           新建分组
         </button>
@@ -646,6 +672,37 @@ export function StockTreeView({
           onClose={() => setMoveTarget(null)}
           onMoved={() => void load()}
           onError={showError}
+        />
+      )}
+      {groupPrompt && (
+        <PromptDialog
+          title={groupPrompt.title}
+          initialValue={groupPrompt.initialValue}
+          placeholder={groupPrompt.placeholder}
+          onConfirm={(name) => {
+            if (groupPrompt.mode === 'rename') {
+              const id = groupPrompt.groupId
+              if (id && name !== groupPrompt.initialValue) void runMutate('groupRename', { id, name })
+            } else {
+              const args: Record<string, unknown> = { name, category: 'A' }
+              if (groupPrompt.parentId) args.parentId = groupPrompt.parentId
+              void runMutate('groupCreate', args)
+            }
+            setGroupPrompt(null)
+          }}
+          onCancel={() => setGroupPrompt(null)}
+        />
+      )}
+      {groupConfirm && (
+        <ConfirmDialog
+          title={groupConfirm.title}
+          message={groupConfirm.message}
+          confirmLabel="删除"
+          onConfirm={() => {
+            void runMutate('groupDelete', { id: groupConfirm.groupId })
+            setGroupConfirm(null)
+          }}
+          onCancel={() => setGroupConfirm(null)}
         />
       )}
       {menu && createPortal(
