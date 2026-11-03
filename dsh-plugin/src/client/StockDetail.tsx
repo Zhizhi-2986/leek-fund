@@ -1,16 +1,54 @@
 /**
- * Expandable stock detail: intraday minute chart (SVG) with percentage-based
- * Y-axis (±10% default, auto-switch to ±20%), volume-weighted average price,
- * 0-axis reference and MA5/MA10/MA20 values.
+ * Stock detail pane: 「当日数据 | 5分钟K线」 manual dual view.
+ *
+ * - `daily` view: quote metrics + intraday price-position bar + trade data
+ *   (no chart; per the dsh-leek-fund dual-view spec the daily page stays
+ *   lightweight — no 分时图).
+ * - `kline` view: 5-minute candlestick SVG. Candles, wicks, MA lines, both
+ *   axis tick sets and yestclose/limit references all use the single
+ *   `priceToY` mapping from `kline-math.ts`, so a bar's true high/low can
+ *   never be clipped while a tick at the same price sits inside the plot.
+ *   The wicks themselves are the only high/low indication (per the
+ *   hide-extremum-labels spec, no 最高/最低 labels or reconciliation bar are
+ *   drawn).
+ *
+ * The last, still-forming bar is flagged 进行中 based on `bar.completed`
+ * (derived server-side from the exchange clock).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { displayPrice } from '../quote.js'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { marketStatus } from '../market-status.js'
+import { displayPrice, formatPercent } from '../quote.js'
+import {
+  barExtremes,
+  buildPriceScale,
+  maSeries,
+  priceToY,
+  tickDigitsFor,
+  tickFor,
+  yToPrice,
+} from '../kline-math.js'
+import { formatVolumeHands, formatYuanAmount } from '../trade-format.js'
 import s from './styles.module.css'
+
+export interface KlineBar {
+  /** YYYY-MM-DD */
+  date: string
+  /** HH:mm (bar end time, e.g. 09:35 for the 09:30–09:35 bar). */
+  time: string
+  open: number
+  close: number
+  high: number
+  low: number
+  volume: number
+  /** Whether the 5-minute bucket has closed (last bar of the day may still be forming). */
+  completed: boolean
+}
 
 export interface StockDetailData {
   code: string
   name: string
   price: number
+  open: number
   high: number
   low: number
   yestclose: number
@@ -18,348 +56,605 @@ export interface StockDetailData {
   limitDown: number
   circulatingMarketCap: number
   volumeRatio: number
+  /** 今日成交量（手，含当前未收盘桶） */
+  volume: number
+  /** 今日成交额（元） */
+  amount: number
+  /** 今日换手率（%） */
+  turnoverRate: number
+  /** 上一交易日最高价（0 = 无数据） */
+  yestHigh: number
+  /** 上一交易日最低价（0 = 无数据） */
+  yestLow: number
+  /** 近 60 个交易日最高价（含当前交易日，0 = 无数据） */
+  high60: number
+  /** 近 60 个交易日最低价（含当前交易日，0 = 无数据） */
+  low60: number
   time: string
-  minute: { time: string; price: number; avgPrice: number; volume: number }[]
-  ma: { ma5: number | null; ma10: number | null; ma20: number | null }
+  /** Latest trading day's bars, ascending (≤ 48). */
+  kline5: KlineBar[]
+  /** Previous days' 5-minute closes (ascending) — MA warmup context. */
+  klineWarmup?: number[]
+  ma: {
+    ma5: number | null
+    ma10: number | null
+    ma20: number | null
+    ma30: number | null
+    ma60: number | null
+  }
 }
 
-// ── Chart layout constants ─────────────────────────────────────────────
+export type DetailViewMode = 'daily' | 'kline'
 
-const WIDTH = 300
-const VIEW_HEIGHT = 180
-const PAD = { top: 10, right: 44, bottom: 6, left: 50 }
-/** Bottom of the price chart area. */
-const PRICE_BOTTOM = 152
-/** Half of the inner width (morning / afternoon each get half). */
-const HALF_W = (WIDTH - PAD.left - PAD.right) / 2 // 103
-/** Price chart inner height. */
-const PRICE_H = PRICE_BOTTOM - PAD.top // 142
+// ── Chart constants & colors ────────────────────────────────────────────
 
-/** Low-key color for up/down figures (kept subtle per user request). */
-const LOWKEY = '#8a8a8a'
+const UP = '#e02e24'
+const DOWN = '#2e9e4f'
+const GRAY = '#8a919c'
+const GRID = '#eef1f4'
+const REF = '#b7bdc7'
+const AMBER = '#b56c17'
 
-// ── Colors ─────────────────────────────────────────────────────────────
+const MA_COLORS: Record<number, string> = {
+  5: '#d1a03c',
+  10: '#7092d8',
+  20: '#b27acc',
+  30: '#84939f',
+  60: '#399d9e',
+}
+const MA_PERIODS = [5, 10, 20, 30, 60] as const
 
-/** Line color for the minute chart (red/green for trend readability). */
-function priceColor(price: number, yestclose: number): string {
-  if (price > yestclose) return '#e02e24'
-  if (price < yestclose) return '#2e9e4f'
-  return '#888'
+const MIN_CHART_W = 620
+const PAD = { top: 18, right: 54, bottom: 26, left: 56 }
+const REFRESH_MS = 30_000
+
+// ── View-mode persistence (lightweight; no plugin settings plumbing) ────
+
+const VIEW_KEY_PREFIX = 'leek-fund:detailView:'
+
+function viewStorageKey(tabKey: string): string {
+  return `${VIEW_KEY_PREFIX}${tabKey}`
 }
 
-// ── Time helpers ───────────────────────────────────────────────────────
+function readDetailView(tabKey: string): DetailViewMode {
+  try {
+    return localStorage.getItem(viewStorageKey(tabKey)) === 'kline' ? 'kline' : 'daily'
+  } catch {
+    return 'daily'
+  }
+}
 
-/** 9:30 -> 0 in the fixed 9:30-11:30 / 13:00-15:00 axis. */
+function writeDetailView(tabKey: string, mode: DetailViewMode): void {
+  try {
+    localStorage.setItem(viewStorageKey(tabKey), mode)
+  } catch {
+    // Storage may be unavailable (private mode); the switch still works per session.
+  }
+}
+
+// ── Small helpers ───────────────────────────────────────────────────────
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, value))
+
 function timeToMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number)
   return h * 60 + m
 }
 
-/** Map a clock time to the fixed x axis: each half-session owns half the width. */
-function xOf(time: string): number {
+/**
+ * Map a bar's end time to the fixed x axis. Morning owns the left half
+ * (9:30–11:30), afternoon the right half (13:00–15:00); the lunch recess is
+ * never treated as continuous trading. For valid intraday times this equals
+ * the 48-slot position, while missing bars simply leave honest gaps.
+ */
+function xOfTime(time: string, left: number, right: number): number {
   const minutes = timeToMinutes(time)
+  const half = (right - left) / 2
   if (minutes <= 690) {
-    // morning 9:30 (570) -> 11:30 (690)
-    const t = Math.max(0, Math.min(1, (minutes - 570) / 120))
-    return PAD.left + t * HALF_W
+    const t = clamp((minutes - 570) / 120, 0, 1)
+    return left + t * half
   }
-  // afternoon 13:00 (780) -> 15:00 (900)
-  const t = Math.max(0, Math.min(1, (minutes - 780) / 120))
-  return PAD.left + HALF_W + t * HALF_W
+  const t = clamp((minutes - 780) / 120, 0, 1)
+  return left + half + t * half
 }
 
-/** Y position for a given percentage value in a ±halfRange chart. */
-function pctY(percent: number, halfRange: number): number {
-  const ratio = percent / halfRange
-  return PAD.top + PRICE_H / 2 - ratio * (PRICE_H / 2)
+function fmtPrice(detail: StockDetailData, value: number): string {
+  return displayPrice(detail.code, detail.name, value)
 }
 
-/** Build a polyline points string for a price series in percentage space. */
-function buildPctPoints(
-  minute: { time: string; price: number }[],
-  yestclose: number,
-  halfRange: number
-): string {
-  return minute
-    .map((point) => {
-      const x = xOf(point.time)
-      const pct = yestclose > 0 ? ((point.price - yestclose) / yestclose) * 100 : 0
-      const y = pctY(pct, halfRange)
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
+function fmtVolume(volume: number): string {
+  if (!Number.isFinite(volume) || volume <= 0) return '--'
+  return `${Math.round(volume).toLocaleString('zh-CN')} 手`
 }
 
-/** Build a polyline points string for avgPrice series in percentage space. */
-function buildAvgPctPoints(
-  minute: { time: string; avgPrice: number }[],
-  yestclose: number,
-  halfRange: number
-): string {
-  return minute
-    .map((point) => {
-      const x = xOf(point.time)
-      const pct = yestclose > 0 && point.avgPrice > 0
-        ? ((point.avgPrice - yestclose) / yestclose) * 100
-        : 0
-      const y = pctY(pct, halfRange)
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
-}
+// ── Daily view ──────────────────────────────────────────────────────────
 
-// ── Format helpers ─────────────────────────────────────────────────────
+function DailyPanel({ detail }: { detail: StockDetailData }): JSX.Element {
+  const price = detail.price
+  const updown = price - detail.yestclose
+  const percent = detail.yestclose > 0 ? (updown / detail.yestclose) * 100 : 0
+  const high = detail.high
+  const low = detail.low
+  const inRange = high > low && Number.isFinite(price)
+  const ratio = inRange ? clamp((price - low) / (high - low), 0, 1) : 0.5
 
-/** Format a number with appropriate precision for price display. */
-function fmtPrice(value: number, digits = 2): string {
-  return value.toFixed(digits)
-}
-
-/** 格式化金额：元 → 万/亿 */
-function fmtAmount(value: number): string {
-  if (!value || value <= 0) return '--'
-  if (value >= 1e8) return (value / 1e8).toFixed(2) + '亿'
-  if (value >= 1e4) return (value / 1e4).toFixed(2) + '万'
-  return value.toFixed(2)
-}
-
-// ── MinuteChart component ──────────────────────────────────────────────
-
-function MinuteChart({ detail }: { detail: StockDetailData }): JSX.Element {
-  const { minute, yestclose, limitUp, limitDown } = detail
-  const prices = minute.map((p) => p.price)
-  if (prices.length === 0) return <div className={s.hint}>暂无分时数据</div>
-  if (yestclose <= 0) return <div className={s.hint}>缺少昨收数据</div>
-
-  // 计算所有点的涨跌幅
-  const pcts = prices.map((p) => yestclose > 0 ? ((p - yestclose) / yestclose) * 100 : 0)
-  const maxPct = Math.max(...pcts, 0)
-  const minPct = Math.min(...pcts, 0)
-  const absMax = Math.max(Math.abs(maxPct), Math.abs(minPct))
-
-  // 确定 Y 轴百分比范围：默认 ±10%，超限自动切换 ±20%
-  let halfRange = 10
-  if (absMax > 10) halfRange = 20
-
-  // ── 价格线 & 均价线 ──
-  const priceLine = buildPctPoints(minute, yestclose, halfRange)
-  const avgLine = buildAvgPctPoints(minute, yestclose, halfRange)
-  const lastColor = priceColor(prices[prices.length - 1], yestclose)
-
-  // ── Y 轴刻度（百分比）──
-  const pctTicks = [-halfRange, -halfRange / 2, 0, halfRange / 2, halfRange]
-
+  const cells: Array<{ label: string; value: string; tone?: 'up' | 'down' | 'flat' }> = [
+    { label: '今开', value: detail.open > 0 ? fmtPrice(detail, detail.open) : '--' },
+    { label: '最高', value: high > 0 ? fmtPrice(detail, high) : '--', tone: 'up' },
+    { label: '最低', value: low > 0 ? fmtPrice(detail, low) : '--', tone: 'down' },
+    { label: '昨收', value: detail.yestclose > 0 ? fmtPrice(detail, detail.yestclose) : '--' },
+    { label: '涨停', value: detail.limitUp > 0 ? fmtPrice(detail, detail.limitUp) : '--', tone: 'up' },
+    { label: '跌停', value: detail.limitDown > 0 ? fmtPrice(detail, detail.limitDown) : '--', tone: 'down' },
+  ]
+  const trades: Array<{ label: string; value: string }> = [
+    // All real values come from the server payload; '--' only when the
+    // source lacks them (e.g. data provider outage).
+    { label: '成交量', value: formatVolumeHands(detail.volume) },
+    { label: '成交额', value: formatYuanAmount(detail.amount) },
+    { label: '换手率', value: detail.turnoverRate > 0 ? `${detail.turnoverRate.toFixed(2)}%` : '--' },
+    { label: '量比', value: detail.volumeRatio > 0 ? detail.volumeRatio.toFixed(2) : '--' },
+    {
+      label: '流通市值',
+      value: detail.circulatingMarketCap > 0 ? `${(detail.circulatingMarketCap / 1e8).toFixed(2)} 亿` : '--',
+    },
+  ]
+  const refs: Array<{ label: string; value: string; tone: 'up' | 'down' }> = [
+    { label: '昨高', value: detail.yestHigh > 0 ? fmtPrice(detail, detail.yestHigh) : '--', tone: 'up' },
+    { label: '昨低', value: detail.yestLow > 0 ? fmtPrice(detail, detail.yestLow) : '--', tone: 'down' },
+    { label: '60日最高', value: detail.high60 > 0 ? fmtPrice(detail, detail.high60) : '--', tone: 'up' },
+    { label: '60日最低', value: detail.low60 > 0 ? fmtPrice(detail, detail.low60) : '--', tone: 'down' },
+  ]
   return (
-    <svg
-      viewBox={`0 0 ${WIDTH} ${VIEW_HEIGHT}`}
-      style={{ width: '100%', display: 'block' }}
-    >
-      {/* ═══ Price chart area ═══ */}
+    <div className={s.dailyPanel}>
+      <div className={s.metricGrid}>
+        {cells.map((cell) => (
+          <div className={s.metricCell} key={cell.label}>
+            <span className={s.metricLabel}>{cell.label}</span>
+            <b className={cell.tone === 'up' ? s.toneUp : cell.tone === 'down' ? s.toneDown : undefined}>
+              {cell.value}
+            </b>
+          </div>
+        ))}
+      </div>
 
-      {/* Grid lines at each tick */}
-      {pctTicks.map((pct) => (
-        <line
-          key={`g-${pct}`}
-          x1={PAD.left}
-          x2={WIDTH - PAD.right}
-          y1={pctY(pct, halfRange)}
-          y2={pctY(pct, halfRange)}
-          stroke={pct === 0 ? '#777' : '#333'}
-          strokeWidth={pct === 0 ? '1' : '0.5'}
-          strokeDasharray={pct === 0 ? 'none' : '3 3'}
-        />
-      ))}
+      <div className={s.rangeCard}>
+        <div className={s.rangeHead}>
+          <span>日内价格位置</span>
+        </div>
+        <div className={s.rangeTrack} aria-hidden="true">
+          <span className={s.rangeFill} style={{ width: `${clamp(ratio * 100, 2, 98)}%` }} />
+          <span className={s.rangeDot} style={{ left: `${clamp(ratio * 100, 0, 100)}%` }} />
+        </div>
+        <div className={s.rangeLabels}>
+          <span>{low > 0 ? fmtPrice(detail, low) : '--'}</span>
+          <span>{high > 0 ? fmtPrice(detail, high) : '--'}</span>
+        </div>
+        <div className={s.refGrid}>
+          {refs.map((row) => (
+            <div className={s.refRow} key={row.label}>
+              <span>{row.label}</span>
+              <b className={row.tone === 'up' ? s.toneUp : s.toneDown}>{row.value}</b>
+            </div>
+          ))}
+        </div>
+      </div>
 
-      {/* 0-axis label */}
-      <text
-        x={PAD.left - 4}
-        y={pctY(0, halfRange) + 2.5}
-        fontSize="7"
-        fill="#999"
-        textAnchor="end"
-      >
-        0.00%
-      </text>
-
-      {/* Limit-up reference line */}
-      {limitUp > 0 && limitUp > yestclose && (
-        <line
-          x1={PAD.left}
-          x2={WIDTH - PAD.right}
-          y1={pctY(((limitUp - yestclose) / yestclose) * 100, halfRange)}
-          y2={pctY(((limitUp - yestclose) / yestclose) * 100, halfRange)}
-          stroke="#e02e24"
-          strokeDasharray="2 4"
-          strokeWidth="0.6"
-        />
-      )}
-
-      {/* Limit-down reference line */}
-      {limitDown > 0 && limitDown < yestclose && (
-        <line
-          x1={PAD.left}
-          x2={WIDTH - PAD.right}
-          y1={pctY(((limitDown - yestclose) / yestclose) * 100, halfRange)}
-          y2={pctY(((limitDown - yestclose) / yestclose) * 100, halfRange)}
-          stroke="#2e9e4f"
-          strokeDasharray="2 4"
-          strokeWidth="0.6"
-        />
-      )}
-
-      {/* Price line */}
-      <polyline
-        points={priceLine}
-        fill="none"
-        stroke={lastColor}
-        strokeWidth="1.2"
-        vectorEffect="non-scaling-stroke"
-      />
-
-      {/* Average price line */}
-      {minute.some((point) => point.avgPrice > 0) && (
-        <polyline
-          points={avgLine}
-          fill="none"
-          stroke="#d89000"
-          strokeWidth="1"
-          strokeDasharray="2 2"
-          vectorEffect="non-scaling-stroke"
-        />
-      )}
-
-      {/* ─── Left Y-axis: percentage ─── */}
-      {pctTicks.map((pct) => {
-        const y = pctY(pct, halfRange)
-        if (pct === 0) return null // 0-axis already labeled above
-        const tickColor = pct > 0 ? '#e02e24' : '#2e9e4f'
-        return (
-          <text
-            key={`lp-${pct}`}
-            x={PAD.left - 4}
-            y={y + 2.5}
-            fontSize="7"
-            fill={tickColor}
-            textAnchor="end"
-          >
-            {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
-          </text>
-        )
-      })}
-
-      {/* ─── Right Y-axis: price ─── */}
-      {pctTicks.map((pct) => {
-        const y = pctY(pct, halfRange)
-        if (pct === 0) return null
-        const priceVal = yestclose * (1 + pct / 100)
-        const tickColor = pct > 0 ? '#e02e24' : '#2e9e4f'
-        return (
-          <text
-            key={`rp-${pct}`}
-            x={WIDTH - PAD.right + 4}
-            y={y + 2.5}
-            fontSize="7"
-            fill={tickColor}
-            textAnchor="start"
-          >
-            {fmtPrice(priceVal)}
-          </text>
-        )
-      })}
-
-      {/* ─── Limit up/down labels ─── */}
-      {limitUp > 0 && limitUp > yestclose && (
-        <text
-          x={WIDTH - PAD.right}
-          y={pctY(((limitUp - yestclose) / yestclose) * 100, halfRange) - 2}
-          fontSize="7"
-          fill="#e02e24"
-          textAnchor="end"
-        >
-          涨停 {fmtPrice(limitUp)}
-        </text>
-      )}
-      {limitDown > 0 && limitDown < yestclose && (
-        <text
-          x={WIDTH - PAD.right}
-          y={pctY(((limitDown - yestclose) / yestclose) * 100, halfRange) + 10}
-          fontSize="7"
-          fill="#2e9e4f"
-          textAnchor="end"
-        >
-          跌停 {fmtPrice(limitDown)}
-        </text>
-      )}
-
-      {/* ─── Time axis labels ─── */}
-      <text x={PAD.left} y={PRICE_BOTTOM + 22} fontSize="7" fill="#999" textAnchor="middle">9:30</text>
-      <text x={PAD.left + HALF_W * 0.5} y={PRICE_BOTTOM + 22} fontSize="7" fill="#999" textAnchor="middle">10:30</text>
-      <text x={PAD.left + HALF_W} y={PRICE_BOTTOM + 22} fontSize="7" fill="#999" textAnchor="middle">11:30/13:00</text>
-      <text x={PAD.left + HALF_W + HALF_W * 0.5} y={PRICE_BOTTOM + 22} fontSize="7" fill="#999" textAnchor="middle">14:00</text>
-      <text x={WIDTH - PAD.right} y={PRICE_BOTTOM + 22} fontSize="7" fill="#999" textAnchor="middle">15:00</text>
-    </svg>
+      <div className={s.tradeGrid}>
+        {trades.map((row) => (
+          <div className={s.tradeLine} key={row.label}>
+            <span>{row.label}</span>
+            <b>{row.value}</b>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
-// ── StockDetail component ──────────────────────────────────────────────
+// ── K-line SVG chart ────────────────────────────────────────────────────
 
-export function StockDetail({ code, name }: { code: string; name: string }): JSX.Element {
+interface PlotArea {
+  left: number
+  right: number
+  top: number
+  bottom: number
+}
+
+/** Numeric label with a thin line, drawn beside the right price axis. */
+function axisReference(y: number, text: string, color: string, plot: PlotArea): string {
+  return (
+    `<line x1="${plot.left}" x2="${plot.right}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" ` +
+    `stroke="${color}" stroke-width="1" stroke-dasharray="4 4" opacity="0.85"/>` +
+    `<text x="${plot.right + 6}" y="${(y + 3.5).toFixed(2)}" font-size="10" fill="${color}">${text}</text>`
+  )
+}
+
+function KlineChart({ detail }: { detail: StockDetailData }): JSX.Element {
+  const bars = useMemo(
+    () => (Array.isArray(detail.kline5) ? detail.kline5 : []),
+    [detail.kline5]
+  )
+  const warmup = useMemo(
+    () => (Array.isArray(detail.klineWarmup) ? detail.klineWarmup : []),
+    [detail.klineWarmup]
+  )
+  const frameRef = useRef<HTMLDivElement | null>(null)
+  const [frameWidth, setFrameWidth] = useState(0)
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+  const [hoverY, setHoverY] = useState<number | null>(null)
+
+  // The frame is the single source of truth for the chart's width; the SVG
+  // viewBox equals its CSS size (1:1, crisp on Retina), so bars can never
+  // be pushed below a folded container edge.
+  useEffect(() => {
+    const el = frameRef.current
+    if (!el) return
+    const measure = (): void => setFrameWidth(el.clientWidth)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const extremes = useMemo(() => barExtremes(bars), [bars])
+
+  if (bars.length === 0 || extremes === null) {
+    return (
+      <div className={s.klineEmpty}>
+        暂无 5 分钟 K 线数据
+        {detail.time ? <span> · 行情时间 {detail.time}</span> : null}
+      </div>
+    )
+  }
+
+  const digits = tickDigitsFor(detail.code, detail.name, bars[bars.length - 1].close)
+  const tick = tickFor(detail.code, detail.name, bars[bars.length - 1].close)
+  const lastClose = bars[bars.length - 1].close
+
+  const W = Math.max(MIN_CHART_W, frameWidth || MIN_CHART_W)
+  const H = Math.round(clamp(W * 0.46, 250, 440))
+  const plot: PlotArea = {
+    left: PAD.left,
+    right: W - PAD.right,
+    top: PAD.top,
+    bottom: H - PAD.bottom,
+  }
+
+  // MA series over 5-minute closes with real previous-day warmup; nulls
+  // (window not yet filled) simply skip their segment.
+  const allCloses = [...warmup, ...bars.map((bar) => bar.close)]
+  const maValues = new Map<number, (number | null)[]>()
+  let rawMin = extremes.low
+  let rawMax = extremes.high
+  for (const period of MA_PERIODS) {
+    const values = maSeries(allCloses, period).slice(warmup.length)
+    maValues.set(period, values)
+    for (const value of values) {
+      if (value !== null && Number.isFinite(value)) {
+        rawMin = Math.min(rawMin, value)
+        rawMax = Math.max(rawMax, value)
+      }
+    }
+  }
+
+  const scale = buildPriceScale(rawMin, rawMax, plot.top, plot.bottom, 0.06, tick)
+  const yestcloseY = priceToY(detail.yestclose, scale)
+  const lastInProgress = !bars[bars.length - 1].completed
+  const hovered = hoverIndex !== null && bars[hoverIndex] ? bars[hoverIndex] : null
+
+  // ── SVG assembly (string templates keep hot-path rendering cheap) ──────
+  let svg = ''
+  const slotW = (plot.right - plot.left) / 48
+
+  // Grid + dual ticks (percent left, price right) — same priceToY mapping.
+  for (let i = 0; i <= 5; i += 1) {
+    const price = scale.max - ((scale.max - scale.min) * i) / 5
+    const y = priceToY(price, scale)
+    const pct = detail.yestclose > 0 ? ((price - detail.yestclose) / detail.yestclose) * 100 : 0
+    const tone = pct > 0.005 ? UP : pct < -0.005 ? DOWN : GRAY
+    svg +=
+      `<line x1="${plot.left}" x2="${plot.right}" y1="${y.toFixed(2)}" y2="${y.toFixed(2)}" ` +
+      `stroke="${GRID}" stroke-width="1" stroke-dasharray="3 5"/>` +
+      `<text x="${plot.left - 8}" y="${(y + 3.5).toFixed(2)}" text-anchor="end" font-size="11" fill="${tone}">` +
+      `${formatPercent(pct)}</text>` +
+      `<text x="${plot.right + 8}" y="${(y + 3.5).toFixed(2)}" text-anchor="start" font-size="11" fill="#6b7380">` +
+      `${displayPrice(detail.code, detail.name, price)}</text>`
+  }
+
+  // References: yestclose zero-axis + limit lines (drawn only when visible).
+  svg += axisReference(yestcloseY, `昨收 ${fmtPrice(detail, detail.yestclose)}`, REF, plot)
+  if (detail.limitUp > 0 && detail.limitUp < scale.max) {
+    svg += axisReference(priceToY(detail.limitUp, scale), `涨停 ${fmtPrice(detail, detail.limitUp)}`, '#c79a3c', plot)
+  }
+  if (detail.limitDown > 0 && detail.limitDown > scale.min) {
+    svg += axisReference(priceToY(detail.limitDown, scale), `跌停 ${fmtPrice(detail, detail.limitDown)}`, '#3f8f76', plot)
+  }
+
+  // Time axis labels + decorative lunch divider (bars keep their own slots).
+  const xLabels: Array<{ text: string; x: number; anchor: string }> = [
+    { text: '09:30', x: plot.left, anchor: 'start' },
+    { text: '10:30', x: xOfTime('10:30', plot.left, plot.right), anchor: 'middle' },
+    { text: '11:30/13:00', x: (plot.left + plot.right) / 2, anchor: 'middle' },
+    { text: '14:00', x: xOfTime('14:00', plot.left, plot.right), anchor: 'middle' },
+    { text: '15:00', x: plot.right, anchor: 'end' },
+  ]
+  for (const label of xLabels) {
+    svg +=
+      `<text x="${label.x.toFixed(2)}" y="${(H - 8).toFixed(2)}" text-anchor="${label.anchor}" ` +
+      `font-size="10" fill="#9aa1ab">${label.text}</text>`
+  }
+  svg +=
+    `<line x1="${((plot.left + plot.right) / 2).toFixed(2)}" x2="${((plot.left + plot.right) / 2).toFixed(2)}" ` +
+    `y1="${plot.top}" y2="${plot.bottom}" stroke="${GRID}" stroke-dasharray="2 5"/>`
+
+  // Candles: wick line + body rect, red up / green down.
+  let wickLines = ''
+  let bodyRects = ''
+  for (let i = 0; i < bars.length; i += 1) {
+    const bar = bars[i]
+    const x = xOfTime(bar.time, plot.left, plot.right)
+    const up = bar.close >= bar.open
+    const color = up ? UP : DOWN
+    const highY = priceToY(bar.high, scale)
+    const lowY = priceToY(bar.low, scale)
+    const openY = priceToY(bar.open, scale)
+    const closeY = priceToY(bar.close, scale)
+    wickLines +=
+      `<line x1="${x.toFixed(2)}" y1="${highY.toFixed(2)}" x2="${x.toFixed(2)}" y2="${lowY.toFixed(2)}" ` +
+      `stroke="${color}" stroke-width="1.3"/>`
+    const bodyY = Math.min(openY, closeY)
+    const bodyH = Math.max(1, Math.abs(closeY - openY))
+    const bodyW = Math.max(2, Math.min(5.5, slotW * 0.68))
+    bodyRects +=
+      `<rect x="${(x - bodyW / 2).toFixed(2)}" y="${bodyY.toFixed(2)}" width="${bodyW.toFixed(2)}" ` +
+      `height="${bodyH.toFixed(2)}" fill="${color}"/>`
+  }
+  svg += wickLines + bodyRects
+
+  // MA polylines (5-minute SMA with warmup; values are on the same scale).
+  for (const period of MA_PERIODS) {
+    const values = maValues.get(period)!
+    const points: string[] = []
+    for (let i = 0; i < bars.length; i += 1) {
+      const value = values[i]
+      if (value === null || !Number.isFinite(value)) continue
+      const x = xOfTime(bars[i].time, plot.left, plot.right)
+      points.push(`${x.toFixed(2)},${priceToY(value, scale).toFixed(2)}`)
+    }
+    if (points.length > 1) {
+      svg += `<polyline fill="none" stroke="${MA_COLORS[period]}" stroke-width="1.4" opacity="0.92" ` +
+        `stroke-linecap="round" stroke-linejoin="round" points="${points.join(' ')}"/>`
+    }
+  }
+
+  // In-progress marker for the still-forming last bar.
+  if (lastInProgress && bars.length > 0) {
+    const last = bars[bars.length - 1]
+    const x = xOfTime(last.time, plot.left, plot.right)
+    const y = clamp(priceToY(last.high, scale) - 14, plot.top + 16, plot.bottom - 10)
+    svg +=
+      `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" text-anchor="middle" font-size="10" fill="${AMBER}">` +
+      `进行中</text>`
+  }
+
+  // Hover crosshair: vertical line on the nearest bar, horizontal line at
+  // the cursor (its reference price comes from the inverse mapping).
+  if (hovered && hoverY !== null) {
+    const barX = xOfTime(hovered.time, plot.left, plot.right)
+    const crossColor = 'rgba(90, 110, 140, 0.55)'
+    svg +=
+      `<line x1="${barX.toFixed(2)}" x2="${barX.toFixed(2)}" y1="${plot.top}" y2="${plot.bottom}" ` +
+      `stroke="${crossColor}" stroke-width="1" stroke-dasharray="3 4"/>` +
+      `<line x1="${plot.left}" x2="${plot.right}" y1="${hoverY.toFixed(2)}" y2="${hoverY.toFixed(2)}" ` +
+      `stroke="${crossColor}" stroke-width="1" stroke-dasharray="3 4"/>`
+    const refPrice = yToPrice(hoverY, scale)
+    if (Number.isFinite(refPrice)) {
+      svg +=
+        `<text x="${(plot.right + 8).toFixed(2)}" y="${(hoverY - 3).toFixed(2)}" ` +
+        `font-size="10" fill="#4d5662" paint-order="stroke" stroke="#fff" stroke-width="3">` +
+        `${displayPrice(detail.code, detail.name, refPrice)}</text>`
+    }
+  }
+
+  return (
+    <div className={s.klineBlock}>
+      <div className={s.chartFrame} ref={frameRef}>
+        <svg
+          className={s.chartSvg}
+          width={W}
+          height={H}
+          viewBox={`0 0 ${W} ${H}`}
+          role="img"
+          aria-label={`${detail.name} 5 分钟 K 线`}
+          onMouseMove={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            const x = event.clientX - rect.left
+            const y = event.clientY - rect.top
+            if (y < plot.top || y > plot.bottom) {
+              setHoverIndex(null)
+              setHoverY(null)
+              return
+            }
+            setHoverY(y)
+            let nearest = -1
+            let nearestDx = slotW * 0.62
+            for (let i = 0; i < bars.length; i += 1) {
+              const dx = Math.abs(xOfTime(bars[i].time, plot.left, plot.right) - x)
+              if (dx < nearestDx) {
+                nearestDx = dx
+                nearest = i
+              }
+            }
+            setHoverIndex(nearest >= 0 ? nearest : null)
+          }}
+          onMouseLeave={() => {
+            setHoverIndex(null)
+            setHoverY(null)
+          }}
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      </div>
+      {hovered ? (
+        <div className={s.ohlcChip}>
+          <span className={s.ohlcTime}>
+            {hovered.time}
+            {hovered.completed ? '' : <span className={s.ohlcLive}> · 进行中</span>}
+          </span>
+          <span>开 {displayPrice(detail.code, detail.name, hovered.open)}</span>
+          <span>高 {displayPrice(detail.code, detail.name, hovered.high)}</span>
+          <span>低 {displayPrice(detail.code, detail.name, hovered.low)}</span>
+          <span>收 {displayPrice(detail.code, detail.name, hovered.close)}</span>
+          <span className={s.ohlcMuted}>量 {fmtVolume(hovered.volume)}</span>
+          <span className={s.ohlcMuted}>最新 {displayPrice(detail.code, detail.name, lastClose)}</span>
+        </div>
+      ) : (
+        <div className={s.ohlcHint}>悬停蜡烛查看分时 OHLC</div>
+      )}
+    </div>
+  )
+}
+
+// ── Pane: header + view switch + body ───────────────────────────────────
+
+export function StockDetailPane({
+  code,
+  name,
+  tabKey,
+  onClose,
+}: {
+  code: string
+  name: string
+  tabKey: string
+  onClose?: () => void
+}): JSX.Element {
   const [detail, setDetail] = useState<StockDetailData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [view, setView] = useState<DetailViewMode>(() => readDetailView(tabKey))
 
   useEffect(() => {
-    let cancelled = false
-    fetch('/leek-fund/api/quoteDetail', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code }),
-    })
-      .then((res) => res.json())
-      .then((json: StockDetailData & { error?: string }) => {
-        if (cancelled) return
-        if (json.error) setError(json.error)
-        else setDetail(json)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(String(err))
-      })
+    let active = true
+    let timer: ReturnType<typeof setInterval> | undefined
+    const controller = new AbortController()
+
+    const load = async (): Promise<void> => {
+      try {
+        const res = await fetch('/leek-fund/api/quoteDetail', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ code }),
+          signal: controller.signal,
+        })
+        const json = (await res.json()) as StockDetailData & { error?: string }
+        if (!active) return
+        if (!res.ok || json.error) throw new Error(json.error ?? `HTTP ${res.status}`)
+        setDetail(json)
+        setError(null)
+      } catch (err) {
+        if (!active || (err instanceof DOMException && err.name === 'AbortError')) return
+        setError(err instanceof Error ? err.message : '加载失败')
+      }
+    }
+
+    void load()
+    timer = setInterval(() => void load(), REFRESH_MS)
     return () => {
-      cancelled = true
+      active = false
+      if (timer) clearInterval(timer)
+      controller.abort()
     }
   }, [code])
 
-  if (error) return <div className={`${s.detail} ${s.level2}`}>详情加载失败：{error}</div>
-  if (!detail) return <div className={`${s.detail} ${s.level2}`}>加载详情…</div>
+  const switchView = (mode: DetailViewMode): void => {
+    setView(mode)
+    writeDetailView(tabKey, mode)
+  }
 
-  const lastAvg = detail.minute.at(-1)?.avgPrice ?? 0
+  const price = detail?.price ?? 0
+  const updown = detail && detail.yestclose > 0 ? price - detail.yestclose : 0
+  const percent = detail && detail.yestclose > 0 ? (updown / detail.yestclose) * 100 : 0
+  const status = marketStatus(detail?.time ?? '')
 
   return (
-    <div className={`${s.detail} ${s.level2}`}>
-      {/* Price stats row */}
-      <div className={s.detailStats}>
-        {detail.limitUp > 0 && <span>涨停 <b style={{ color: '#e02e24' }}>{displayPrice(code, name, detail.limitUp)}</b></span>}
-        {detail.limitDown > 0 && <span>跌停 <b style={{ color: '#2e9e4f' }}>{displayPrice(code, name, detail.limitDown)}</b></span>}
-        <span>最高 <b>{displayPrice(code, name, detail.high)}</b></span>
-        <span>最低 <b>{displayPrice(code, name, detail.low)}</b></span>
-        <span>均价 <b>{lastAvg > 0 ? displayPrice(code, name, lastAvg) : '--'}</b></span>
-        {detail.circulatingMarketCap > 0 && (
-          <span>流通市值 <b>{fmtAmount(detail.circulatingMarketCap)}</b></span>
-        )}
-        {detail.volumeRatio > 0 && (
-          <span>量比 <b>{detail.volumeRatio.toFixed(2)}</b></span>
+    <div className={s.detailPane}>
+      <div className={s.paneHeader}>
+        <div className={s.paneTitleWrap}>
+          <div className={s.paneTitle}>
+            {name}
+            <span className={s.paneCode}>{code.toUpperCase()}</span>
+          </div>
+          {detail ? (
+            <div className={s.panePrice + (percent > 0.005 ? ` ${s.toneUp}` : percent < -0.005 ? ` ${s.toneDown}` : '')}>
+              {displayPrice(code, name, price)}
+              <span className={s.paneChange}>
+                {updown >= 0 ? '+' : ''}
+                {displayPrice(code, name, updown)} / {formatPercent(percent)}
+              </span>
+            </div>
+          ) : (
+            <div className={s.panePrice}>--</div>
+          )}
+        </div>
+        <div className={s.viewSwitch} role="tablist" aria-label="详情视图">
+          <button
+            type="button"
+            className={s.viewSwitchBtn + (view === 'daily' ? ` ${s.active}` : '')}
+            aria-selected={view === 'daily'}
+            onClick={() => switchView('daily')}
+          >
+            当日数据
+          </button>
+          <button
+            type="button"
+            className={s.viewSwitchBtn + (view === 'kline' ? ` ${s.active}` : '')}
+            aria-selected={view === 'kline'}
+            onClick={() => switchView('kline')}
+          >
+            5分钟K线
+          </button>
+        </div>
+        {onClose && (
+          <button
+            type="button"
+            className={s.paneClose}
+            aria-label="关闭详情"
+            onClick={onClose}
+          >
+            ×
+          </button>
         )}
       </div>
 
-      {/* Minute chart */}
-      <MinuteChart detail={detail} />
-
-      {/* MA values */}
-      <div className={s.detailMa}>
-        <span>MA5 <b>{detail.ma.ma5 !== null ? displayPrice(code, name, detail.ma.ma5) : '--'}</b></span>
-        <span>MA10 <b>{detail.ma.ma10 !== null ? displayPrice(code, name, detail.ma.ma10) : '--'}</b></span>
-        <span>MA20 <b>{detail.ma.ma20 !== null ? displayPrice(code, name, detail.ma.ma20) : '--'}</b></span>
-        <span className={s.detailHint}>5/10/20 日均线（按日收盘价）</span>
-      </div>
+      {detail ? (
+        <>
+          <div className={s.paneStatus}>
+            <span>{status.label}</span>
+            {detail.time ? <span className={s.paneStatusTime}>行情时间 {detail.time}</span> : null}
+          </div>
+          {view === 'daily' ? (
+            <DailyPanel detail={detail} />
+          ) : (
+            <>
+              <div className={s.maRow}>
+                {MA_PERIODS.map((period) => (
+                  <span key={period}>
+                    <i style={{ background: MA_COLORS[period] }} />
+                    MA{period}{' '}
+                    <b>{detail.ma?.[`ma${period}` as keyof typeof detail.ma] != null
+                      ? displayPrice(code, name, detail.ma[`ma${period}` as keyof typeof detail.ma] as number)
+                      : '--'}</b>
+                  </span>
+                ))}
+              </div>
+              <KlineChart detail={detail} />
+            </>
+          )}
+        </>
+      ) : error ? (
+        <div className={s.detailError}>详情加载失败：{error}</div>
+      ) : (
+        <div className={s.detailLoading}>加载中…</div>
+      )}
     </div>
   )
 }

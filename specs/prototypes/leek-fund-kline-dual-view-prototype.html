@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>dsh-leek-fund · 双视图与 5 分钟 K 线精度原型</title>
+  <style>
+    :root { color-scheme: light; --bg:#ffffff; --shell:#fbfbfc; --panel:#fff; --sub:#f7f8fa; --border:#e6e8ec; --border-strong:#d9dde4; --text:#24272e; --muted:#7c838d; --subtle:#a0a6b0; --blue:#3479d3; --blue-bg:#edf4ff; --up:#d7403a; --down:#20975a; --amber:#b56c17; --amber-bg:#fff8e9; --shadow:0 8px 32px rgba(26,39,63,.05); }
+    * { box-sizing: border-box; }
+    html,body { margin:0; width:100%; min-height:100%; background:var(--bg); color:var(--text); font:13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif; }
+    button,input { font:inherit; }
+    button { cursor:pointer; }
+    button:focus-visible,input:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+    .app { height:100vh; min-height:620px; display:flex; flex-direction:column; overflow:hidden; }
+    .host-tabs { background:var(--shell); border-bottom:1px solid var(--border); height:39px; display:flex; align-items:stretch; gap:27px; padding:0 22px; flex-shrink:0; }
+    .host-tab { display:flex; align-items:center; border-bottom:2px solid transparent; color:#8b929b; font-size:12px; padding:2px 0 0; }
+    .host-tab.active { color:var(--blue); font-weight:600; border-color:var(--blue); }
+    .ticker { background:#fcfcfd; display:flex; padding:7px 21px; align-items:center; gap:23px; border-bottom:1px solid var(--border); min-height:53px; overflow-x:auto; scrollbar-width:thin; flex-shrink:0; }
+    .ticker-item { min-width:max-content; }
+    .ticker-name { color:#9aa0a8; font-size:10px; }
+    .ticker-val { color:#5a6068; font-variant-numeric:tabular-nums; font-size:11px; white-space:nowrap; }
+    .ticker-val .plus { color:var(--up); } .ticker-val .minus { color:var(--down); }
+    .tools { height:46px; flex-shrink:0; display:flex; align-items:center; padding:0 20px; border-bottom:1px solid var(--border); justify-content:space-between; gap:12px; }
+    .tools-left,.tools-right { display:flex; align-items:center; gap:8px; }
+    .button { background:#fff; border:1px solid var(--border-strong); border-radius:7px; padding:5px 10px; min-height:29px; color:#555d68; font-size:12px; }
+    .button:hover { border-color:#b4c7e6; background:#f8fbff; }
+    .button.strong { color:var(--blue); border-color:#bcd4f5; background:#f5f9ff; }
+    .button.icon { padding:5px 8px; }
+    .prototype-tag { color:#8c929a; font-size:11px; }
+    .workspace { flex:1; min-height:0; display:grid; grid-template-columns: minmax(260px, 302px) minmax(0, 1fr); }
+    .sidebar { min-width:0; display:flex; flex-direction:column; background:#fdfdfd; border-right:1px solid var(--border); }
+    .sidebar-top { padding:15px 13px 10px; border-bottom:1px solid #f0f1f3; }
+    .sidebar-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+    .sidebar-heading strong { font-size:12px; letter-spacing:.02em; }
+    .sidebar-heading span { color:var(--subtle); font-size:11px; }
+    .searchbox { display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:7px; padding:7px 9px; background:#fff; }
+    .searchbox:focus-within { border-color:#acc9ec; }
+    .searchbox svg { color:#9aa2ad; flex:none; }
+    .searchbox input { border:0; outline:none; width:100%; background:transparent; font-size:12px; color:var(--text); }
+    .tree { flex:1; min-height:0; overflow:auto; padding:9px 7px 18px; }
+    .tree-group { display:flex; align-items:center; justify-content:space-between; color:#656c75; font-size:11px; padding:6px 8px; }
+    .tree-group strong { font-weight:600; }
+    .tree-group span { color:#a2a7ae; }
+    .stock-row { border:1px solid transparent; border-radius:8px; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; min-height:59px; padding:8px 9px; width:100%; text-align:left; background:transparent; color:var(--text); margin-bottom:2px; }
+    .stock-row:hover { background:#f5f7fa; }
+    .stock-row.active { border-color:#dbe7fc; background:#eff5ff; }
+    .stock-primary { min-width:0; }
+    .stock-primary b { font-size:12px; font-weight:550; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .stock-primary small { display:block; font-size:10px; color:#9ba2aa; font-variant-numeric:tabular-nums; margin-top:2px; }
+    .stock-right { text-align:right; min-width:70px; }
+    .stock-right b { font-size:12px; display:block; font-weight:550; font-variant-numeric:tabular-nums; }
+    .stock-right small { display:block; font-size:10px; margin-top:2px; font-variant-numeric:tabular-nums; }
+    .rise { color:var(--up); } .fall { color:var(--down); } .flat { color:#7c838b; }
+    .sidebar-bottom { padding:10px 13px; border-top:1px solid var(--border); font-size:10px; color:#9aa2ab; }
+    .detail { overflow:auto; min-height:0; min-width:0; padding:20px clamp(19px,3.1vw,44px) 34px; }
+    .detail-inner { max-width:1200px; margin:0 auto; }
+    .detail-head { display:flex; align-items:center; justify-content:space-between; gap:15px; margin-bottom:20px; flex-wrap:wrap; }
+    .detail-head h1 { margin:0; font-size:16px; letter-spacing:-.2px; }
+    .detail-head p { margin:3px 0 0; color:var(--muted); font-size:11px; }
+    .switcher { padding:3px; border-radius:9px; border:1px solid var(--border); background:#f5f6f8; display:inline-flex; gap:2px; }
+    .switcher button { color:#777f89; background:transparent; border:0; padding:7px 17px; border-radius:7px; font-size:12px; min-width:93px; }
+    .switcher button.selected { color:#242933; background:#fff; box-shadow:0 1px 5px rgba(20,30,50,.10); font-weight:600; }
+    .stock-summary { display:flex; align-items:end; gap:12px; flex-wrap:wrap; padding-bottom:17px; border-bottom:1px solid var(--border); }
+    .stock-summary .price { font-size:35px; font-weight:550; letter-spacing:-1.3px; line-height:1.05; font-variant-numeric:tabular-nums; }
+    .stock-summary .change { font-size:14px; margin-bottom:3px; font-weight:560; font-variant-numeric:tabular-nums; }
+    .summary-meta { margin-left:auto; text-align:right; color:#8b929c; font-size:11px; line-height:1.65; }
+    .section-title { margin:22px 0 12px; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .section-title h2 { font-size:13px; font-weight:620; margin:0; }
+    .section-title span { font-size:11px; color:#9aa0a9; }
+    .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .metric { border:1px solid var(--border); border-radius:9px; background:#fff; padding:13px 15px; min-width:0; }
+    .metric label { display:block; font-size:11px; color:#9097a0; margin-bottom:7px; }
+    .metric strong { font-weight:560; font-size:18px; line-height:1.2; font-variant-numeric:tabular-nums; }
+    .range-card { border:1px solid var(--border); border-radius:10px; padding:19px 22px 15px; background:#fff; }
+    .range-top { display:flex; justify-content:space-between; align-items:baseline; gap:10px; font-size:12px; }
+    .range-top b { font-variant-numeric:tabular-nums; }
+    .range-bar { height:9px; border-radius:20px; background:linear-gradient(90deg,#e6f2eb,#f5e6e0); position:relative; margin:28px 0 13px; }
+    .range-pointer { display:block; position:absolute; left:50%; top:-8px; transform:translateX(-50%); width:3px; height:25px; background:#23272f; border-radius:3px; }
+    .range-pointer::before { content:""; display:block; position:absolute; top:-6px; left:50%; transform:translateX(-50%); width:0;height:0; border-left:5px solid transparent; border-right:5px solid transparent; border-top:6px solid #23272f; }
+    .range-axis { display:flex; justify-content:space-between; font-size:11px; color:#8f969e; }
+    .range-foot { margin-top:10px; color:#89909a; font-size:11px; }
+    .trade-list { border:1px solid var(--border); border-radius:10px; padding:3px 18px; display:grid; grid-template-columns:1fr 1fr; column-gap:36px; }
+    .trade-line { border-bottom:1px solid #f0f1f3; padding:14px 3px; display:flex; justify-content:space-between; align-items:center; font-size:12px; }
+    .trade-line:nth-last-child(-n+2) { border-bottom:0; }
+    .trade-line span { color:#8b939c; } .trade-line b { font-weight:550; font-variant-numeric:tabular-nums; }
+    .soft-note { display:flex; align-items:flex-start; gap:9px; margin-top:18px; padding:11px 13px; color:#757e8c; background:#f7f8fa; border-radius:7px; font-size:11px; line-height:1.7; }
+    .soft-note svg { flex:none; margin-top:1px; }
+    .chart-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:13px 0 8px; }
+    .chart-actions .legend { display:flex; flex-wrap:wrap; gap:12px; color:#8f969d; font-size:11px; }
+    .legend-dot { display:inline-block; height:7px; width:7px; border-radius:50%; margin-right:4px; }
+    .demo-controls { display:flex; flex-wrap:wrap; gap:13px; font-size:11px; color:#6b7581; }
+    .demo-controls label { display:flex; align-items:center; gap:5px; white-space:nowrap; cursor:pointer; }
+    .demo-controls input { accent-color:var(--blue); margin:0; }
+    .chart-frame { border:1px solid var(--border); background:#fff; border-radius:10px; padding:11px 10px 11px; overflow:hidden; }
+    .chart-headbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; min-height:26px; padding:3px 12px 7px; font-size:11px; color:#6c7480; gap:6px; }
+    .chart-headbar strong { font-weight:570; color:#424952; }
+    #chartSvg { display:block; width:100%; height:auto; max-height:480px; touch-action:pan-y; }
+    .chart-status { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:4px 12px 6px; color:#9aa1a9; font-size:10px; }
+    .chart-verify { margin-top:10px; border:1px solid #d8e5f5; background:#f7fbff; color:#557394; border-radius:8px; padding:10px 12px; font-size:11px; }
+    .chart-verify.warn { border-color:#efdaaf; background:var(--amber-bg); color:#95601d; }
+    .debug-info { white-space:pre-wrap; word-break:break-word; margin-top:8px; padding:10px 13px; background:#252b35; color:#d3e0f1; border-radius:7px; font:11px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace; display:none; }
+    .debug-info.open { display:block; }
+    .footer { font-size:10px; color:#9fa6ae; padding-top:16px; }
+    .empty { padding:20px 12px; text-align:center; color:#959ba5; }
+    .hide { display:none !important; }
+    @media (max-width:960px) {
+      .workspace { grid-template-columns:minmax(200px,34%) minmax(0,1fr); }
+      .detail { padding:18px 17px 28px; }
+      .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .trade-list { column-gap:14px; }
+    }
+    @media (max-width:650px) {
+      .app { height:auto; min-height:100vh; overflow:visible; }
+      .host-tabs { gap:19px; }
+      .tools { padding:0 12px; }
+      .prototype-tag { display:none; }
+      .workspace { display:flex; flex-direction:column; overflow:visible; }
+      .sidebar { border-right:0; border-bottom:1px solid var(--border); }
+      .tree { display:flex; gap:6px; overflow-x:auto; padding:8px 12px 12px; }
+      .tree-group,.sidebar-bottom { display:none; }
+      .stock-row { min-width:145px; width:145px; }
+      .sidebar-top { border-bottom:0; padding:9px 12px 0; }
+      .sidebar-heading { margin-bottom:7px; }
+      .detail { overflow:visible; }
+      .detail-head { margin-bottom:15px; }
+      .detail-head h1 { font-size:14px; }
+      .summary-meta { width:100%; text-align:left; margin-left:0; }
+      .trade-list { grid-template-columns:1fr; }
+      .trade-line:nth-last-child(2) { border-bottom:1px solid #f0f1f3; }
+      .ticker { padding:6px 12px; gap:16px; }
+      .chart-frame { overflow-x:auto; }
+      #chartSvg { min-width:660px; max-height:none; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <nav class="host-tabs" aria-label="DSH 页签示意"><span class="host-tab">对话</span><span class="host-tab active">行情</span><span class="host-tab">Git</span><span class="host-tab">上下文</span><span class="host-tab">···</span></nav>
+  <div class="ticker" id="indexTicker" aria-label="指数平铺条"></div>
+  <div class="tools"><div class="tools-left"><span style="font-size:12px;color:#555d68">行情工作区</span><span style="color:#c7ccd2">/</span><span style="font-size:11px;color:#8c939c">自选与单股详情</span></div><div class="tools-right"><span class="prototype-tag">静态原型 · 模拟数据</span><button class="button icon" id="resetBtn" title="恢复默认原型">↺ 重置</button></div></div>
+  <main class="workspace">
+    <aside class="sidebar" aria-label="股票树">
+      <div class="sidebar-top"><div class="sidebar-heading"><strong>自选股票</strong><span id="stockCount"></span></div><label class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.8" cy="10.8" r="7.2"/><path d="m16.3 16.3 5.1 5.1"/></svg><input id="stockSearch" placeholder="搜索名称或代码" aria-label="搜索股票" /></label></div>
+      <div class="tree" id="stockTree"></div>
+      <div class="sidebar-bottom">点击股票切换右侧内容；不会自动改变视图模式。</div>
+    </aside>
+    <section class="detail" aria-live="polite">
+      <div class="detail-inner">
+        <header class="detail-head"><div><h1 id="detailName">国际复材 <span style="font-size:12px;color:#99a1aa;font-weight:400">301526</span></h1><p>单股详情 · 交易日模拟数据 · 仅供设计验证</p></div><div class="switcher" role="tablist" aria-label="右侧详情视图"><button id="btnDaily" class="selected" role="tab" aria-selected="true">当日数据</button><button id="btnKline" role="tab" aria-selected="false">5分钟K线</button></div></header>
+        <div class="stock-summary"><span class="price" id="lastPrice">19.71</span><span class="change" id="lastChange">+5.97%</span><div class="summary-meta"><div id="quoteTime">报价时间：14:47:15（模拟）</div><div>价格 / K 线均为独立合成示例</div></div></div>
+        <section id="dailyView" role="tabpanel" aria-labelledby="btnDaily">
+          <div class="section-title"><h2>今日价格表现</h2><span>当日行情快照</span></div>
+          <div class="metrics" id="priceMetrics"></div>
+          <div class="section-title"><h2>日内价格位置</h2><span>采用日内最高 / 最低价精确定位</span></div>
+          <div class="range-card"><div class="range-top"><span>今日波动区间</span><b id="rangeNow">19.71</b></div><div class="range-bar"><span class="range-pointer" id="rangePointer"></span></div><div class="range-axis"><span id="rangeMin">18.52 最低</span><span id="rangeMax">20.27 最高</span></div><div class="range-foot" id="rangePercent">现价处于日内区间的 68.0% 位置</div></div>
+          <div class="section-title"><h2>交易活跃度</h2><span>接口缺失字段展示为「—」</span></div>
+          <div class="trade-list" id="tradeMetrics"></div>
+          <div class="soft-note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 10v6m0-9v.5"/></svg><div>此视图专注于当日数据，不增加分时图。左侧选择股票后，右侧仅更新当前证券的信息；切换模式由用户手动控制。</div></div>
+        </section>
+        <section id="klineView" role="tabpanel" aria-labelledby="btnKline" class="hide">
+          <div class="chart-actions"><div class="legend"><span><i class="legend-dot" style="background:#d6a547"></i>MA5</span><span><i class="legend-dot" style="background:#7092d8"></i>MA10</span><span><i class="legend-dot" style="background:#b27acc"></i>MA20</span><span><i class="legend-dot" style="background:#84939f"></i>MA30</span><span><i class="legend-dot" style="background:#399d9e"></i>MA60</span></div><div class="demo-controls"><label><input id="diffToggle" type="checkbox"/> 演示数据源差异</label><label><input id="debugToggle" type="checkbox"/> 显示坐标调试</label></div></div>
+          <div class="chart-frame"><div class="chart-headbar"><strong id="chartTitle">5 分钟蜡烛图 · 真实极值演示</strong><span id="hoverText">悬停蜡烛查看时间与 OHLC</span></div><svg id="chartSvg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="可交互五分钟K线示例，真实最低影线与统一Y轴映射" viewBox="0 0 940 440"></svg><div class="chart-status"><span>左轴：相对昨收涨跌幅　　右轴：价格 · 窄屏可横向滚动</span><span id="barsText">48 根五分钟K线 · 示例</span></div></div>
+          <div id="verifyMessage" class="chart-verify" role="status"></div>
+          <div id="debugInfo" class="debug-info"></div>
+          <div class="soft-note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 10v6m0-9v.5"/></svg><div><b>绘图验收规则：</b>蜡烛实体、影线、MA、左右价格轴和极值标签共用一套 <code>priceToY()</code>。仅使用原始蜡烛的 high / low 得出极值；如果行情快照与 K 线数据不同，只提示差异，不补造影线。图中的分钟数据为专门构造的测试样本。</div></div>
+        </section>
+        <div class="footer">dsh-leek-fund UI / K线精度开发原型 · 纯 HTML / CSS / JavaScript · 无外部依赖 · 不连接行情接口</div>
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+(() => {
+  'use strict';
+  const stocks = [
+    { id:'sh000001', name:'上证指数', price:3632.79, pct:0.94, prevClose:3599.0, open:3605.7, high:3641.2, low:3588.2, group:'持仓股' },
+    { id:'sz399006', name:'创业板指', price:2461.25, pct:1.97, prevClose:2413.7, open:2424.7, high:2471.1, low:2400.7, group:'持仓股' },
+    { id:'sz159381', name:'创AI', price:0.821, pct:2.37, prevClose:0.802, open:0.806, high:0.831, low:0.796, group:'持仓股', digits:3 },
+    { id:'sh000688', name:'科创50', price:1193.34, pct:2.80, prevClose:1160.84, open:1168.2, high:1200.2, low:1151.7, group:'持仓股' },
+    { id:'sh588990', name:'科创芯片ETF博时', price:2.498, pct:2.59, prevClose:2.435, open:2.454, high:2.521, low:2.420, group:'持仓股', digits:3 },
+    { id:'sz159516', name:'半导体设备', price:0.463, pct:4.51, prevClose:0.443, open:0.448, high:0.470, low:0.442, group:'持仓股', digits:3 },
+    { id:'sz301526', name:'国际复材', price:19.71, pct:5.97, prevClose:18.60, open:19.02, high:20.27, low:18.52, group:'持仓股' }
+  ];
+  const indexes = [
+    ['上证指数','3632.79','+0.94%'],['创业板指','2461.25','+1.97%'],['科创50','1193.34','+2.80%'],['日经225指数','63081.64','-0.33%'],['韩国KOSPI指数','5859.08','+2.24%']
+  ];
+  const $ = id => document.getElementById(id);
+  const fmt = (n, digits=2) => Number.isFinite(n) ? n.toFixed(digits) : '—';
+  const sign = n => n>0?'+':'';
+  const color = n => n>0?'rise':n<0?'fall':'flat';
+  const state = { symbol:'sz301526', view:'daily', hover:null, difference:false, debug:false };
+  try { state.view = localStorage.getItem('leek-prototype-view')==='kline' ? 'kline' : 'daily'; } catch (_) {}
+  const getStock = () => stocks.find(s => s.id===state.symbol) || stocks[stocks.length-1];
+  const els = { chart: $('chartSvg'), search:$('stockSearch') };
+
+  function drawTicker(){ $('indexTicker').innerHTML = indexes.map(([name,price,pct])=>`<div class="ticker-item"><div class="ticker-name">${name}</div><div class="ticker-val">${pct[0]==='-'?'▼':'▲'} ${price} <span class="${pct[0]==='-'?'minus':'plus'}">${pct}</span></div></div>`).join(''); }
+  function drawTree(){
+    const q=els.search.value.trim().toLowerCase();
+    const filtered=stocks.filter(s=>!q || s.name.toLowerCase().includes(q)||s.id.toLowerCase().includes(q)||s.id.slice(2).includes(q));
+    $('stockCount').textContent=`${stocks.length} 只`;
+    $('stockTree').innerHTML = `<div style="width:100%" class="tree-content"><div class="tree-group"><strong>▾　持仓股</strong><span>${stocks.length} 只</span></div>${filtered.map(s=>`<button type="button" class="stock-row ${s.id===state.symbol?'active':''}" data-symbol="${s.id}" aria-pressed="${s.id===state.symbol}"><span class="stock-primary"><b>${s.name}</b><small>${s.id}</small></span><span class="stock-right"><b>${fmt(s.price,s.digits||2)}</b><small class="${color(s.pct)}">${sign(s.pct)}${fmt(s.pct)}%</small></span></button>`).join('') || '<div class="empty">没有匹配的股票</div>'}</div>`;
+    $('stockTree').querySelectorAll('[data-symbol]').forEach(b=>b.addEventListener('click',()=>{
+      state.symbol=b.dataset.symbol; state.hover=null; drawTree(); updateDetail();
+    }));
+  }
+  function updateDetail(){
+    const s=getStock();
+    $('detailName').innerHTML=`${s.name} <span style="font-size:12px;color:#99a1aa;font-weight:400">${s.id.slice(2)}</span>`;
+    $('lastPrice').textContent=fmt(s.price,s.digits||2);
+    $('lastPrice').className='price '+color(s.pct);
+    $('lastChange').textContent=`${sign(s.pct)}${fmt(s.pct)}%　${sign(s.price-s.prevClose)}${fmt(s.price-s.prevClose,s.digits||2)}`;
+    $('lastChange').className='change '+color(s.pct);
+    $('quoteTime').textContent='报价时间：14:47:15（模拟）';
+    const digits=s.digits||2;
+    const cells=[['今开',s.open],['最高',s.high],['最低',s.low],['昨收',s.prevClose],['涨跌额',s.price-s.prevClose],['涨跌幅',sign(s.pct)+fmt(s.pct)+'%'],['涨停价',null],['跌停价',null]];
+    $('priceMetrics').innerHTML=cells.map(([label,v])=>`<div class="metric"><label>${label}</label><strong>${typeof v==='number'?fmt(v,digits):v===null?'—':v}</strong></div>`).join('');
+    $('tradeMetrics').innerHTML=[['成交量','—'],['成交额','—'],['换手率','—'],['量比','—']].map(([n,v])=>`<div class="trade-line"><span>${n}</span><b>${v}</b></div>`).join('');
+    const span=s.high-s.low;
+    const ratio=span>0?Math.max(0,Math.min(1,(s.price-s.low)/span)):0.5;
+    $('rangePointer').style.left=`${ratio*100}%`;
+    $('rangeMin').textContent=`${fmt(s.low,digits)} 最低`;
+    $('rangeMax').textContent=`${fmt(s.high,digits)} 最高`;
+    $('rangeNow').textContent=`现价 ${fmt(s.price,digits)}`;
+    $('rangePercent').textContent=span>0?`现价处于日内区间的 ${(ratio*100).toFixed(1)}% 位置`:'最高与最低相同，区间位置不可定义';
+    updateView();
+  }
+  function updateView(){
+    const daily=state.view==='daily';
+    $('dailyView').classList.toggle('hide',!daily);
+    $('klineView').classList.toggle('hide',daily);
+    $('btnDaily').classList.toggle('selected',daily); $('btnKline').classList.toggle('selected',!daily);
+    $('btnDaily').setAttribute('aria-selected',String(daily));
+    $('btnKline').setAttribute('aria-selected',String(!daily));
+    if(!daily) renderChart();
+  }
+  function setView(next){ state.view=next; state.hover=null; try { localStorage.setItem('leek-prototype-view',next); } catch (_) {} updateView(); }
+
+  // ----- Chart fixture: deterministic synthetic OHLC, NOT market history -----
+  function sessionTime(i){
+    const minute=i<24 ? 9*60+35+i*5 : 13*60+5+(i-24)*5;
+    return `${String(Math.floor(minute/60)).padStart(2,'0')}:${String(minute%60).padStart(2,'0')}`;
+  }
+  function barFixtures(s, difference){
+    const n=48; const range=s.high-s.low || Math.max(s.price*.015,.01); const digs=s.digits||2;
+    const min = difference ? s.low+range*.50 : s.low;
+    const max = difference ? s.high-range*.08 : s.high;
+    const floor=Math.min(min,max-.001); const ceil=Math.max(max,floor+.001);
+    const tick=Math.pow(10,-digs);
+    const arr=[]; let last=Math.min(ceil-range*.11, Math.max(floor+range*.05,s.open));
+    for (let i=0;i<n;i++) {
+      const t=i/(n-1);
+      const center=floor+(ceil-floor)*(.43+.17*Math.sin(i*.39)+.16*Math.sin(i*.13+1.5)+.15*t);
+      const close=Math.max(floor+tick,Math.min(ceil-tick,center));
+      const open=i===0?Math.max(floor+tick,Math.min(ceil-tick,last)):last;
+      const spread=Math.max((ceil-floor)*(.025+.045*(1+Math.cos(i*.81))*.5), tick);
+      const high=Math.min(ceil,Math.max(open,close)+spread);
+      const low=Math.max(floor,Math.min(open,close)-spread);
+      arr.push({time:sessionTime(i),open,high,low,close,completed:i<n-1,volume:14000+(i*1897)%21000});
+      last=close;
+    }
+    // The fixture explicitly places an actual wick at the high / low positions.
+    // This verifies that chart coordinates, labels and scale agree with the data.
+    arr[9].high=ceil;
+    arr[35].low=floor;
+    if(!difference){
+      arr[0].open=Math.max(floor,Math.min(ceil,s.open));
+      arr[n-1].close=Math.max(floor,Math.min(ceil,s.price));
+      arr[0].high=Math.max(arr[0].high,arr[0].open,arr[0].close);
+      arr[n-1].high=Math.max(arr[n-1].high,arr[n-1].open,arr[n-1].close);
+      arr[0].low=Math.min(arr[0].low,arr[0].open,arr[0].close);
+      arr[n-1].low=Math.min(arr[n-1].low,arr[n-1].open,arr[n-1].close);
+    }
+    // Guarantee OHLC invariants and round to the instrument's display precision.
+    arr.forEach(b=>{
+      for(const k of ['open','high','low','close']) b[k]=Number(b[k].toFixed(digs));
+      b.high=Math.max(b.high,b.open,b.close); b.low=Math.min(b.low,b.open,b.close);
+    });
+    return arr;
+  }
+  function historicalWarmup(s){
+    // Demo-only preceding candles for MA60. No simulated history is presented as real.
+    const a=[]; for(let i=0;i<64;i++) a.push(s.prevClose + (s.price-s.prevClose)*(.21+.10*Math.sin(i*.36)));
+    return a;
+  }
+  function maSeries(s,bars,period){
+    const pre=historicalWarmup(s); const prices=pre.concat(bars.map(b=>b.close));
+    return bars.map((_,i)=>{
+      const index=pre.length+i;
+      if(index+1<period) return null;
+      let total=0; for(let k=index-period+1;k<=index;k++) total+=prices[k];
+      return total/period;
+    });
+  }
+  const palette={ma5:'#d1a03c',ma10:'#7092d8',ma20:'#b27acc',ma30:'#84939f',ma60:'#399d9e'};
+  const escapeXml = s => String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+  const restrict=(v,min,max)=>Math.max(min,Math.min(max,v));
+
+  function renderChart(){
+    if(state.view!=='kline')return;
+    const s=getStock(), bars=barFixtures(s,state.difference),digs=s.digits||2;
+    const w=940,h=440,left=77,right=75,top=38,bottom=394,pw=w-left-right,ph=bottom-top;
+    const lows=bars.map(b=>b.low), highs=bars.map(b=>b.high);
+    const barLow=Math.min(...lows),barHigh=Math.max(...highs);
+    const lowIndex=lows.indexOf(barLow),highIndex=highs.indexOf(barHigh);
+    const mas=[5,10,20,30,60].map(n=>({n,arr:maSeries(s,bars,n),color:palette['ma'+n]}));
+    const allLineValues=mas.flatMap(line=>line.arr.filter(Number.isFinite));
+    const rawMin=Math.min(barLow,...allLineValues),rawMax=Math.max(barHigh,...allLineValues);
+    const spread=rawMax-rawMin || Math.pow(10,-digs);
+    const domainMin=rawMin-spread*.06,domainMax=rawMax+spread*.06;
+    const priceToY = price => top+(domainMax-price)/(domainMax-domainMin)*ph;
+    const yToPrice = y => domainMax-(y-top)/ph*(domainMax-domainMin);
+    const idxX = i => left + (i+.5)*pw/bars.length;
+    const candleWidth = Math.max(4,Math.min(10,pw/bars.length*.6));
+    const accent = '#d7403a',down='#20975a',muted='#a1a8b1';
+    let svg='';
+    svg+=`<rect x="0" y="0" width="${w}" height="${h}" fill="#ffffff"/>`;
+    for(let i=0;i<=5;i++){
+      const price=domainMax-(domainMax-domainMin)*i/5;
+      const y=priceToY(price);
+      const pct=(price-s.prevClose)/s.prevClose*100;
+      svg+=`<line x1="${left}" x2="${w-right}" y1="${y.toFixed(3)}" y2="${y.toFixed(3)}" stroke="#e8ebef" stroke-width="1" stroke-dasharray="3 5"/>`;
+      svg+=`<text x="${left-12}" y="${(y+4).toFixed(3)}" text-anchor="end" font-size="11" fill="${pct>0?accent:pct<0?down:'#9298a1'}">${sign(pct)}${fmt(pct,2)}%</text>`;
+      svg+=`<text x="${w-right+11}" y="${(y+4).toFixed(3)}" text-anchor="start" font-size="11" fill="#9198a1">${fmt(price,digs)}</text>`;
+    }
+    const ticks=[0,11,22,27,35,47];
+    ticks.forEach(i=>{svg+=`<text x="${idxX(i).toFixed(3)}" y="${h-13}" text-anchor="middle" font-size="11" fill="#a0a7b1">${bars[i].time}</text>`;});
+    // Lunch divider is decorative; actual bars remain mapped to their explicit 48 session slots.
+    svg+=`<line x1="${(left+pw/2).toFixed(3)}" x2="${(left+pw/2).toFixed(3)}" y1="${top}" y2="${bottom}" stroke="#edf0f2" stroke-dasharray="2 5"/>`;
+    bars.forEach((b,i)=>{
+      const x=idxX(i),up=b.close>=b.open,c=up?accent:down;
+      const highY=priceToY(b.high),lowY=priceToY(b.low),openY=priceToY(b.open),closeY=priceToY(b.close);
+      svg+=`<line x1="${x.toFixed(3)}" y1="${highY.toFixed(3)}" x2="${x.toFixed(3)}" y2="${lowY.toFixed(3)}" stroke="${c}" stroke-width="1.3"/>`;
+      const y=Math.min(openY,closeY),height=Math.max(1,Math.abs(closeY-openY));
+      svg+=`<rect x="${(x-candleWidth/2).toFixed(3)}" y="${y.toFixed(3)}" width="${candleWidth.toFixed(3)}" height="${height.toFixed(3)}" fill="${c}"/>`;
+    });
+    mas.forEach(({n,arr,color})=>{
+      const points=arr.map((val,i)=>Number.isFinite(val)?`${idxX(i).toFixed(3)},${priceToY(val).toFixed(3)}`:null).filter(Boolean);
+      if(points.length>1)svg+=`<polyline fill="none" stroke="${color}" stroke-width="1.5" opacity=".92" stroke-linecap="round" stroke-linejoin="round" points="${points.join(' ')}"/>`;
+    });
+    // Extremum annotations are attached to actual wick coordinates.
+    function extremeLabel(idx,price,isMin){
+      const x=idxX(idx),y=priceToY(price),prefix=isMin?'最低':'最高',label=`${prefix} ${fmt(price,digs)}`;
+      const labelWidth=label.length*(digs===3?7:7.3)+18;
+      const lx=restrict(x-labelWidth/2,left+4,w-right-labelWidth-4);
+      const ly=isMin?Math.min(bottom-18,y+22):Math.max(top+17,y-16);
+      const lineEnd=isMin?ly-12:ly+5;
+      return `<circle cx="${x.toFixed(3)}" cy="${y.toFixed(3)}" r="3.2" fill="#fff" stroke="${isMin?down:accent}" stroke-width="1.7"/><line x1="${x.toFixed(3)}" y1="${y.toFixed(3)}" x2="${x.toFixed(3)}" y2="${lineEnd.toFixed(3)}" stroke="${isMin?down:accent}" stroke-width="1.0"/><rect x="${lx.toFixed(3)}" y="${(ly-13).toFixed(3)}" width="${labelWidth.toFixed(3)}" height="19" rx="5" fill="#fff" stroke="#e0e5eb"/><text x="${(lx+labelWidth/2).toFixed(3)}" y="${ly.toFixed(3)}" text-anchor="middle" font-size="11" font-weight="600" fill="#59616b">${label}</text>`;
+    }
+    svg+=extremeLabel(highIndex,barHigh,false)+extremeLabel(lowIndex,barLow,true);
+    if(state.hover!=null && state.hover>=0 && state.hover<bars.length){
+      const i=state.hover,x=idxX(i),b=bars[i];
+      svg+=`<line x1="${x.toFixed(3)}" y1="${top}" x2="${x.toFixed(3)}" y2="${bottom}" stroke="#8692a3" stroke-width="1" stroke-dasharray="4 4"/><circle cx="${x.toFixed(3)}" cy="${priceToY(b.close).toFixed(3)}" r="4.5" fill="#fff" stroke="#546477" stroke-width="1.5"/>`;
+      $('hoverText').textContent=`${b.time}　开 ${fmt(b.open,digs)}　高 ${fmt(b.high,digs)}　低 ${fmt(b.low,digs)}　收 ${fmt(b.close,digs)}${b.completed?'':' · 进行中'}`;
+    } else {
+      $('hoverText').textContent='悬停蜡烛查看时间与 OHLC';
+    }
+    els.chart.innerHTML=svg;
+    $('barsText').textContent=`${bars.length} 根 5 分钟K线 · ${state.difference?'源数据差异样本':'完整极值样本'} · 虚构测试数据`;
+    $('chartTitle').textContent=state.difference?'5分钟蜡烛图 · 源数据差异样本':'5分钟蜡烛图 · 最高/最低影线精度校验';
+    const mismatch=Math.abs(barLow-s.low)>Math.pow(10,-digs)/2 || Math.abs(barHigh-s.high)>Math.pow(10,-digs)/2;
+    $('verifyMessage').classList.toggle('warn',mismatch);
+    $('verifyMessage').textContent=mismatch
+      ? `⚠ 数据源对账提示：快照最低 ${fmt(s.low,digs)} / 最高 ${fmt(s.high,digs)}；K线源最低 ${fmt(barLow,digs)} / 最高 ${fmt(barHigh,digs)}。图中仅绘制 K 线源真实极值，不补造缺失影线。`
+      : `✓ 精度验证通过（合成样本）：快照与 K线源极值一致。实际蜡烛最低 ${fmt(barLow,digs)}，最高 ${fmt(barHigh,digs)}；对应的影线和标签共用同一价格坐标映射。`;
+    const d=[$('debugInfo')];
+    $('debugInfo').classList.toggle('open',state.debug);
+    $('debugInfo').textContent=[
+      `fixture=${state.difference?'snapshot-mismatch':'exact-extrema'}  symbol=${s.id}  bars=${bars.length}`,
+      `barMinLow=${fmt(barLow,digs)}  at ${bars[lowIndex].time} (index ${lowIndex})`,
+      `barMaxHigh=${fmt(barHigh,digs)}  at ${bars[highIndex].time} (index ${highIndex})`,
+      `domain=[${domainMin.toFixed(6)}, ${domainMax.toFixed(6)}]  plotTop=${top}  plotBottom=${bottom}`,
+      `priceToY(barHigh)=${priceToY(barHigh).toFixed(3)}  priceToY(barLow)=${priceToY(barLow).toFixed(3)}`,
+      `inverse-check: yToPrice(priceToY(barLow))=${yToPrice(priceToY(barLow)).toFixed(6)}`,
+      `extrema inside plot=${priceToY(barHigh)>=top && priceToY(barLow)<=bottom ? 'YES':'NO'}`,
+      `MA60 computed with 64 preceding synthetic bars (prototype only)`
+    ].join('\n');
+    if(state.debug)console.assert(priceToY(barHigh)>=top-1e-7 && priceToY(barLow)<=bottom+1e-7,'Extrema clipped');
+    els.chart.onpointermove=e=>{
+      const r=els.chart.getBoundingClientRect();
+      const logicalX=(e.clientX-r.left)*(w/r.width);
+      const index=restrict(Math.floor((logicalX-left)/pw*bars.length),0,bars.length-1);
+      if(index!==state.hover){state.hover=index;renderChart();}
+    };
+    els.chart.onpointerleave=()=>{if(state.hover!=null){state.hover=null;renderChart();}};
+  }
+  $('btnDaily').addEventListener('click',()=>setView('daily'));
+  $('btnKline').addEventListener('click',()=>setView('kline'));
+  $('stockSearch').addEventListener('input',drawTree);
+  $('diffToggle').addEventListener('change',e=>{state.difference=e.target.checked; state.hover=null; renderChart();});
+  $('debugToggle').addEventListener('change',e=>{state.debug=e.target.checked; renderChart();});
+  $('resetBtn').addEventListener('click',()=>{
+    state.symbol='sz301526'; state.view='daily'; state.hover=null; state.difference=false;state.debug=false;
+    $('stockSearch').value='';$('diffToggle').checked=false;$('debugToggle').checked=false;
+    try { localStorage.removeItem('leek-prototype-view'); } catch (_) {}
+    drawTree();updateDetail();
+  });
+  drawTicker();drawTree();updateDetail();
+})();
+</script>
+</body>
+</html>

@@ -7,12 +7,14 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { displayPrice, formatPercent } from '../quote.js'
+import { marketStatus } from '../market-status.js'
 import { categoryOf, fetchSnapshot, mutate, reorder, type Snapshot } from './api.js'
 import { MoveDialog } from './MoveDialog.js'
 import { ConfirmDialog } from './ConfirmDialog.js'
 import { PromptDialog } from './PromptDialog.js'
-import { StockDetail } from './StockDetail.js'
-import { CollapseAllIcon, PlusIcon, RefreshIcon } from './icons.js'
+import { StockDetailPane } from './StockDetail.js'
+import { AlertPanel } from './AlertPanel.js'
+import { PlusIcon, RefreshIcon } from './icons.js'
 import { SearchDialog } from './SearchDialog.js'
 import { TopTicker } from './TopTicker.js'
 import type { Group, Quote, SpeedRankingItem } from './types.js'
@@ -141,6 +143,8 @@ export function StockTreeView({
 }): JSX.Element {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [clock, setClock] = useState(() => Date.now())
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(expandedByTab.get(tabId) ?? [])
   )
@@ -153,7 +157,17 @@ export function StockTreeView({
   const [dragging, setDragging] = useState<DragPayload | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const suppressClick = useRef(false)
-  const [expandedDetail, setExpandedDetail] = useState<Set<string>>(new Set())
+  // Single-selection model: the detail pane is a sibling column, never an
+  // inline accordion (dual-view spec §7: wide = tree ⧉ detail, narrow = stacked).
+  const [selected, setSelected] = useState<{ code: string; name: string } | null>(null)
+  const [alertTarget, setAlertTarget] = useState<string>()
+  const [alertOpen, setAlertOpen] = useState(false)
+  const alertTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const closeAlert = useCallback(() => {
+    setAlertOpen(false)
+    setAlertTarget(undefined)
+    alertTriggerRef.current?.focus()
+  }, [])
 
   const load = useCallback(async () => {
     if (abortRef.current) abortRef.current.abort()
@@ -162,11 +176,14 @@ export function StockTreeView({
     try {
       const data = await fetchSnapshot(controller.signal)
       setSnapshot(data)
+      setClock(Date.now())
+      setLoadFailed(false)
       setError(null)
 
     } catch (err) {
       if (controller.signal.aborted) return
-      setError(String(err))
+      setLoadFailed(true)
+      setError(`行情更新失败，以下显示上次数据：${String(err)}`)
     }
   }, [])
 
@@ -247,6 +264,7 @@ export function StockTreeView({
     const isFocus = (snapshot?.state.focusCodes ?? []).includes(code)
     const inTicker = (snapshot?.state.statusBarStockCodes ?? []).includes(code)
     const items: MenuItem[] = [
+      { label: '设置行情提醒', action: () => { setAlertTarget(code); setAlertOpen(true) } },
       {
         label: isFocus ? '取消重点关注' : '标记重点关注',
         action: () => void runMutate('mark', { code, mark: 'focus', value: !isFocus }),
@@ -286,7 +304,7 @@ export function StockTreeView({
             action: () => {
               setGroupConfirm({
                 title: `删除分组「${group.name}」`,
-                message: '组内股票将回到关注。',
+                message: '组内股票将回到未分组。',
                 groupId: group.id,
               })
             },
@@ -313,7 +331,7 @@ export function StockTreeView({
         action: () => {
           setGroupConfirm({
             title: `删除分组「${group.name}」及其二级分组`,
-            message: '组内股票将回到关注。',
+            message: '组内股票将回到未分组。',
             groupId: group.id,
           })
         },
@@ -429,14 +447,15 @@ export function StockTreeView({
   function renderStockRow(code: string, list: StockListKey, level: number): JSX.Element {
     const quote = quotes.get(code)
     const line = quoteLine(quote)
-    const isHolding = (snapshot?.state.holdingCodes ?? []).includes(code)
+    const status = marketStatus(quote?.time ?? '', new Date(clock))
     const hintKey = dropHint?.targetCode === code && !dropHint.groupId
       ? (dropHint.position === 'after' ? s.dropAfter : s.dropBefore)
       : ''
     return (
       <Fragment key={code}>
       <div
-        className={`${s.stockRow} ${s[`level${level}`]} ${hintKey} ${dragging?.kind === 'stock' && dragging.code === code ? s.dragging : ''}`}
+        className={`${s.stockRow} ${s[`level${level}`]} ${hintKey} ${dragging?.kind === 'stock' && dragging.code === code ? s.dragging : ''} ${selected?.code === code ? s.rowSelected : ''}`}
+        title={`行情 ${loadFailed ? '更新失败，显示上次数据' : status.label} · ${quote?.time || '时间未知'}`}
         draggable
         onDragStart={(event) => startDrag(event, { kind: 'stock', code, list })}
         onDragEnd={() => {
@@ -448,12 +467,7 @@ export function StockTreeView({
             suppressClick.current = false
             return
           }
-          setExpandedDetail((prev) => {
-            const next = new Set(prev)
-            if (next.has(code)) next.delete(code)
-            else next.add(code)
-            return next
-          })
+          setSelected({ code, name: quote?.name ?? code })
         }}
         onDragOver={(event) => {
           if (dragging?.kind === 'stock' && dragging.code !== code) {
@@ -467,18 +481,18 @@ export function StockTreeView({
         onDrop={(event) => onStockDrop(event, code, list)}
         onContextMenu={(event) => stockMenu(event, code, list)}
       >
-        <span className={s.stockName}>
-          <span className={`${s.stockMark} ${line.cls}`}>{line.mark}</span> {quote?.name ?? code}
+        <span className={s.stockIdentity}>
+          <span className={s.stockName}>
+            <span className={`${s.stockMark} ${line.cls}`}>{line.mark}</span> {quote?.name ?? code}
+          </span>
+          <span className={s.stockCode}>{code}</span>
         </span>
-        <span className={s.stockCode}>{code}</span>
         <span className={s.stockQuote}>
           <span className={`${s.stockPrice} ${line.cls}`}>{line.price}</span>
           <span className={`${s.stockPercent} ${line.cls}`}>{line.percent}</span>
         </span>
+        <button type="button" className={s.rowAction} aria-label={`${quote?.name ?? code}操作`} onClick={(event) => stockMenu(event, code, list)}>⋯</button>
       </div>
-      {expandedDetail.has(code) && (
-        <StockDetail code={code} name={quote?.name ?? code} />
-      )}
     </Fragment>
     )
   }
@@ -600,62 +614,80 @@ export function StockTreeView({
         }}>
           新建分组
         </button>
-        <button
-          className={s.refreshButton}
-          title="全部分组折叠"
-          onClick={() => setExpanded(new Set())}
-        >
-          <CollapseAllIcon />
+        <button ref={alertTriggerRef} type="button" className={s.addButton} onClick={() => { setAlertTarget(undefined); setAlertOpen(true) }}>
+          提醒
         </button>
         <button className={s.refreshButton} title="刷新" onClick={() => void load()}>
           <RefreshIcon />
         </button>
       </div>
-      {error && <div className={s.error}>{error}</div>}
-      <div className={s.tree}>
-        {!tree && <div className={s.hint}>加载中…</div>}
-        {tree && (
-          <>
-            <div
-              className={`${s.groupTitle} ${s.level0}`}
-              onClick={() => toggleKey('builtin:holding')}
-            >
-              <span className={`${s.caret} ${expanded.has('builtin:holding') ? s.caretOpen : ''}`}>▶</span>
-              <span>持仓股</span>
-              <span className={s.groupSummary}>{summarize(tree.holding, quotes)}</span>
-            </div>
-            {expanded.has('builtin:holding') && tree.holding.map((code) => renderStockRow(code, 'holding', 1))}
-            <div
-              className={`${s.groupTitle} ${s.level0}`}
-              onClick={() => toggleKey('builtin:focus')}
-            >
-              <span className={`${s.caret} ${expanded.has('builtin:focus') ? s.caretOpen : ''}`}>▶</span>
-              <span>重点关注</span>
-              <span className={s.groupSummary}>{summarize(tree.focus, quotes)}</span>
-            </div>
-            {expanded.has('builtin:focus') && tree.focus.map((code) => renderStockRow(code, 'focus', 1))}
-            <div
-              className={`${s.groupTitle} ${s.level0}`}
-              onClick={() => toggleKey('builtin:watch')}
-            >
-              <span className={`${s.caret} ${expanded.has('builtin:watch') ? s.caretOpen : ''}`}>▶</span>
-              <span>关注</span>
-              <span className={s.groupSummary}>{summarize(tree.ungroupped, quotes)}</span>
-            </div>
-            {expanded.has('builtin:watch') && tree.ungroupped.map((code) => renderStockRow(code, 'ungroupped', 1))}
-            {tree.topGroups.map((group) => renderGroup(group))}
-            <div
-              className={`${s.groupTitle} ${s.level0}`}
-              onClick={() => toggleKey('builtin:speed-ranking')}
-            >
-              <span className={`${s.caret} ${expanded.has('builtin:speed-ranking') ? s.caretOpen : ''}`}>▶</span>
-              <span>涨速榜</span>
-              <span className={s.groupSummary}>{(snapshot?.speedRanking ?? []).length} 条</span>
-            </div>
-            {expanded.has('builtin:speed-ranking') && (snapshot?.speedRanking ?? []).map(renderSpeedRankingRow)}
-          </>
+      <div className={s.split}>
+        <div className={s.treeSide}>
+          {error && <div className={s.error}>{error}</div>}
+          <div className={s.tree}>
+            {!tree && <div className={s.hint}>加载中…</div>}
+            {tree && (
+              <>
+                <div
+                  className={`${s.groupTitle} ${s.level0}`}
+                  onClick={() => toggleKey('builtin:holding')}
+                >
+                  <span className={`${s.caret} ${expanded.has('builtin:holding') ? s.caretOpen : ''}`}>▶</span>
+                  <span>持仓股</span>
+                  <span className={s.groupSummary}>{summarize(tree.holding, quotes)}</span>
+                </div>
+                {expanded.has('builtin:holding') && tree.holding.map((code) => renderStockRow(code, 'holding', 1))}
+                <div
+                  className={`${s.groupTitle} ${s.level0}`}
+                  onClick={() => toggleKey('builtin:focus')}
+                >
+                  <span className={`${s.caret} ${expanded.has('builtin:focus') ? s.caretOpen : ''}`}>▶</span>
+                  <span>重点关注</span>
+                  <span className={s.groupSummary}>{summarize(tree.focus, quotes)}</span>
+                </div>
+                {expanded.has('builtin:focus') && tree.focus.map((code) => renderStockRow(code, 'focus', 1))}
+                <div
+                  className={`${s.groupTitle} ${s.level0}`}
+                  onClick={() => toggleKey('builtin:watch')}
+                >
+                  <span className={`${s.caret} ${expanded.has('builtin:watch') ? s.caretOpen : ''}`}>▶</span>
+                  <span>未分组</span>
+                  <span className={s.groupSummary}>{summarize(tree.ungroupped, quotes)}</span>
+                </div>
+                {expanded.has('builtin:watch') && tree.ungroupped.map((code) => renderStockRow(code, 'ungroupped', 1))}
+                {tree.topGroups.map((group) => renderGroup(group))}
+                <div
+                  className={`${s.groupTitle} ${s.level0}`}
+                  onClick={() => toggleKey('builtin:speed-ranking')}
+                >
+                  <span className={`${s.caret} ${expanded.has('builtin:speed-ranking') ? s.caretOpen : ''}`}>▶</span>
+                  <span>涨速榜</span>
+                  <span className={s.groupSummary}>{(snapshot?.speedRanking ?? []).length} 条</span>
+                </div>
+                {expanded.has('builtin:speed-ranking') && (snapshot?.speedRanking ?? []).map(renderSpeedRankingRow)}
+              </>
+            )}
+          </div>
+        </div>
+        {selected && (
+          <div className={s.detailSide}>
+            <StockDetailPane
+              key={selected.code}
+              code={selected.code}
+              name={selected.name}
+              tabKey={tabId}
+              onClose={() => setSelected(null)}
+            />
+          </div>
         )}
       </div>
+      {alertOpen && (
+        <AlertPanel
+          codes={tree?.aStocks ?? []}
+          selectedCode={alertTarget}
+          onClose={closeAlert}
+        />
+      )}
       {searchOpen && (
         <SearchDialog
           onClose={() => setSearchOpen(false)}

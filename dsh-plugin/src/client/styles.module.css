@@ -135,6 +135,13 @@
 .stockRow.dragging {
   opacity: 0.4;
 }
+.stockIdentity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
 .stockName {
   flex: 1;
   min-width: 0;
@@ -177,6 +184,16 @@
   font-variant-numeric: tabular-nums;
   opacity: 0.85;
 }
+.rowAction {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.rowAction:hover, .rowAction:focus-visible { background: rgba(127, 127, 127, 0.13); }
 
 /* Level indentation: group stocks indent once, second-level group stocks
  * indent twice relative to the first-level title. */
@@ -364,33 +381,279 @@
   text-align: center;
 }
 
-/* Expandable stock detail. */
-.detail {
-  padding: 6px 10px 8px 16px;
+/* ── Tree ⧉ detail workspace (dual-view spec §7) ──────────────────────── */
+/* Wide: tree column + detail column; narrow: stacked vertically. */
+.split {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+.treeSide {
+  min-width: 0;
+  min-height: 0;
+}
+.detailSide {
+  min-width: 0;
+  min-height: 0;
+}
+@media (min-width: 640px) {
+  .split { flex-direction: row; align-items: flex-start; }
+  .treeSide { flex: 0 0 300px; }
+  .detailSide { flex: 1 1 auto; }
+}
+
+/* Selected stock row highlight. */
+.rowSelected {
+  background: rgba(46, 107, 214, 0.10);
+  box-shadow: inset 2px 0 0 0 #2e6bd6;
+}
+
+/* ── Stock detail pane ────────────────────────────────────────────────── */
+.detailPane {
+  padding: 8px 10px 10px 12px;
   border-left: 2px solid var(--border, rgba(0, 0, 0, 0.1));
-  margin: 2px 8px 4px 8px;
   background: rgba(127, 127, 127, 0.04);
   border-radius: 4px;
   font-size: 11px;
+  min-width: 0;
 }
-.detailStats {
+.paneHeader {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-bottom: 4px;
 }
-.detailStats b, .detailMa b {
+.paneTitleWrap {
+  min-width: 0;
+}
+.paneTitle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.paneCode {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  opacity: 0.55;
+  font-weight: 400;
+}
+.panePrice {
+  margin-top: 2px;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.paneChange {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+.toneUp { color: #e02e24; }
+.toneDown { color: #2e9e4f; }
+.viewSwitch {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.10);
+  flex-shrink: 0;
+}
+.viewSwitchBtn {
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.viewSwitchBtn.active {
+  background: #fff;
+  opacity: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+.paneClose {
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: inherit;
+  opacity: 0.5;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.paneClose:hover { opacity: 1; }
+.paneStatus {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 6px 0 8px;
+  opacity: 0.6;
+}
+.paneStatusTime {
   font-variant-numeric: tabular-nums;
 }
-.detailMa {
+
+/* Daily view: metric grid + intraday position + trade data. */
+.dailyPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 10px;
+}
+.metricCell {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 6px;
+  background: rgba(127, 127, 127, 0.06);
+  border-radius: 4px;
+  min-width: 0;
+}
+.metricLabel { opacity: 0.6; }
+.metricCell b { font-variant-numeric: tabular-nums; }
+.rangeCard {
+  padding: 8px 10px;
+  background: rgba(127, 127, 127, 0.06);
+  border-radius: 6px;
+}
+.rangeHead {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  opacity: 0.75;
+}
+.rangeTrack {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #2e9e4f, #e0e4e8 50%, #e02e24);
+}
+.rangeFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.35);
+}
+.rangeDot {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #4d5662;
+  transform: translate(-50%, -50%);
+}
+.rangeLabels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+/* Reference prices under the intraday position bar: 昨高/昨低/60日最高/60日最低 */
+.refGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 10px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(127, 127, 127, 0.28);
+}
+.refRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.refRow span { opacity: 0.6; }
+.refRow b { font-variant-numeric: tabular-nums; }
+.tradeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 3px 14px;
+}
+.tradeLine {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tradeLine span { opacity: 0.6; }
+.tradeLine b { font-variant-numeric: tabular-nums; font-weight: 500; }
+
+/* K-line view: MA chips, chart frame, hover chip, verification line. */
+.maRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: 4px;
+  gap: 3px 12px;
+  margin: 4px 0 6px;
+  opacity: 0.85;
 }
-.detailHint {
-  opacity: 0.5;
-  margin-left: auto;
+.maRow span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.maRow i {
+  display: inline-block;
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  align-self: center;
+}
+.maRow b { font-variant-numeric: tabular-nums; }
+.klineBlock {
+  min-width: 0;
+}
+.chartFrame {
+  overflow-x: auto;
+  min-width: 0;
+  border: 1px solid rgba(127, 127, 127, 0.12);
+  border-radius: 6px;
+  background: #fff;
+}
+.chartSvg { display: block; }
+.ohlcChip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.ohlcTime { opacity: 0.95; }
+.ohlcLive { color: #b56c17; }
+.ohlcMuted { opacity: 0.55; }
+.ohlcHint {
+  margin-top: 6px;
+  opacity: 0.45;
+}
+.klineEmpty {
+  padding: 20px 8px;
+  text-align: center;
+  opacity: 0.6;
+}
+.detailError {
+  padding: 12px 4px;
+  color: #c0392b;
+  opacity: 0.85;
+}
+.detailLoading {
+  padding: 12px 4px;
+  opacity: 0.6;
 }
 
 /* Drag-over drop indicator. */
@@ -403,3 +666,62 @@
 .dropGroup {
   background: rgba(46, 107, 214, 0.15);
 }
+
+/* Focused alert workspace: history and rules live in a dialog, not in the stock tree. */
+.alertDialog { width: min(460px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 48px)); }
+.alertDialogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+  font-size: 14px;
+}
+.alertClose {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 21px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+}
+.alertClose:hover, .alertClose:focus-visible { background: rgba(127, 127, 127, 0.12); }
+.alertPanel { line-height: 1.55; user-select: text; }
+.alertHeading, .alertRule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.alertHeading strong { letter-spacing: 0.04em; }
+.alertLink {
+  border: 0;
+  background: transparent;
+  color: #2e6bd6;
+  padding: 2px 0;
+  font: inherit;
+  cursor: pointer;
+}
+.alertLink:disabled { opacity: 0.5; cursor: not-allowed; }
+.alertMuted, .alertEvent span { color: var(--text-2, #777); font-size: 11px; }
+.alertEvent { padding: 2px 0; font-variant-numeric: tabular-nums; }
+.alertEvent span { display: block; overflow-wrap: anywhere; }
+.alertNotice { color: var(--text-2, #666); font-size: 11px; }
+.alertError { color: #c0392b; font-size: 11px; }
+.alertSettings { padding-top: 5px; border-top: 1px solid var(--border, rgba(0, 0, 0, 0.08)); }
+.alertForm { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.alertForm select, .alertForm input {
+  min-width: 0;
+  max-width: 110px;
+  padding: 3px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.2));
+  border-radius: 3px;
+  background: var(--surface-1, #fff);
+  color: inherit;
+  font: inherit;
+}
+.alertForm input { width: 65px; }
+.alertRule { padding-top: 4px; font-variant-numeric: tabular-nums; }

@@ -1,34 +1,58 @@
 /**
- * Stock detail data for the LeekFund tab: intraday minute chart (SVG),
- * today's high/low, volume-weighted average price, and MA5/MA10/MA20 from
- * daily closes.
+ * Stock detail data for the LeekFund tab: 5-minute candlestick chart (SVG),
+ * today's open/high/low, and MA5–MA60 as 5-minute-close SMAs.
  *
  * Data sources (priority order):
- *   1. Tencent minute API (ifzq.gtimg.cn) — primary intraday data,
- *      includes yestclose / limit-up / limit-down in one call.
- *   2. Eastmoney (push2his.eastmoney.com) — fallback when Tencent is
+ *   1. Tencent 5-min K-line API (ifzq.gtimg.cn/appstock/app/kline/mkline) —
+ *      primary intraday data, includes yestclose / limit-up / limit-down in
+ *      one call; a 160-bar window also provides the MA warmup history.
+ *   2. Eastmoney (push2his.eastmoney.com, klt=5) — fallback when Tencent is
  *      unavailable or returns empty data.
- *   3. Sina daily K-line (money.finance.sina.com.cn) — for MA computation.
  */
 import type { Quote } from './types.js'
 
-const TENCENT_MINUTE_URL = 'https://ifzq.gtimg.cn/appstock/app/minute/query'
+const TENCENT_MKLINE_URL = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline'
+const TENCENT_DAILY_KLINE_URL = 'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get'
 const EASTMONEY_KLINE_URL = 'https://push2his.eastmoney.com/api/qt/stock/kline/get'
-const SINA_DAILY_URL =
-  'https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData'
 
-export interface MinutePoint {
-  /** HH:mm */
+/**
+ * How many 5-minute bars to request. A trading day has 48 bars, so 160 covers
+ * the current day plus ≈2.3 preceding days — enough context (≥60 closes) for
+ * the MA60 5-minute SMA without faking a shorter window.
+ */
+const M5_BAR_COUNT = 160
+
+/**
+ * How many daily bars to request for the 60-trading-day high/low reference.
+ * `lmt=60` on the daily endpoints returns exactly the latest 60 trading days
+ * (non-trading days are not part of the series).
+ */
+const DAILY_BAR_COUNT = 60
+
+/** One 5-minute candlestick bar. */
+export interface KlineBar {
+  /** YYYY-MM-DD */
+  date: string
+  /** HH:mm (bar end time, e.g. 09:35 for the 09:30–09:35 bar). */
   time: string
-  price: number
-  /** Cumulative-volume-weighted average price (分时均价). */
-  avgPrice: number
+  open: number
+  close: number
+  high: number
+  low: number
+  /** Volume in 手 (lots). */
   volume: number
+  /** Whether the 5-minute bucket has closed (the last bar of the day may still be forming). */
+  completed: boolean
 }
 
-export interface DailyClose {
+/** One daily K-line bar (only the fields needed for reference prices). */
+export interface DailyBar {
+  /** YYYY-MM-DD */
   date: string
-  close: number
+  /** 当日最高 */
+  high: number
+  /** 当日最低 */
+  low: number
 }
 
 export interface StockDetail {
@@ -42,13 +66,39 @@ export interface StockDetail {
   limitUp: number
   limitDown: number
   time: string
-  minute: MinutePoint[]
-  ma: { ma5: number | null; ma10: number | null; ma20: number | null }
-  daily: DailyClose[]
+  /** 5-minute candlestick bars of the latest trading day (≤ 48). */
+  kline5: KlineBar[]
+  /**
+   * 5-minute close prices of the days BEFORE the latest trading day
+   * (ascending). Used as MA warmup so MA5–MA60 are computed over real
+   * 5-minute closes, never faked from daily bars.
+   */
+  klineWarmup: number[]
+  ma: {
+    ma5: number | null
+    ma10: number | null
+    ma20: number | null
+    ma30: number | null
+    ma60: number | null
+  }
   /** 流通市值（元） */
   circulatingMarketCap: number
   /** 量比 */
   volumeRatio: number
+  /** 今日成交量（手，含当前未收盘桶） */
+  volume: number
+  /** 今日成交额（元） */
+  amount: number
+  /** 今日换手率（%） */
+  turnoverRate: number
+  /** 上一交易日最高价（0 = 无数据） */
+  yestHigh: number
+  /** 上一交易日最低价（0 = 无数据） */
+  yestLow: number
+  /** 近 60 个交易日最高价（含当前交易日，0 = 无数据） */
+  high60: number
+  /** 近 60 个交易日最低价（含当前交易日，0 = 无数据） */
+  low60: number
 }
 
 // ── Low-level fetch helpers ────────────────────────────────────────────
@@ -88,48 +138,74 @@ async function fetchJson(url: string, timeoutMs: number, headers: Record<string,
   }
 }
 
-// ── Primary: Tencent minute API ─────────────────────────────────────────
+// ── Primary: Tencent 5-min K-line API ───────────────────────────────────
 
 /**
- * Fetch the intraday minute line from Tencent.
- * Returns `{ points, yestclose, limitUp, limitDown, name }`.
- * When data is unavailable (e.g. non-trading day with no minute data)
- * `points` is an empty array.
+ * Fetch the 5-minute K-line from Tencent.
+ * `bars` holds the K-line; the `qt` metadata inside the same response also
+ * carries the daily trading data (volume / amount / turnover / market cap /
+ * volume ratio / limits / preclose), so all of them come from one request.
+ * When data is unavailable (e.g. non-trading day with no K-line data)
+ * `bars` is an empty array.
  */
-export interface TencentMinuteResult {
-  points: MinutePoint[]
+export interface TencentM5Result {
+  bars: KlineBar[]
   yestclose: number
   open: number
   limitUp: number
   limitDown: number
   name: string
+  /** 今日成交量（手） */
+  volume: number
+  /** 今日成交额（元） */
+  amount: number
+  /** 今日换手率（%） */
+  turnoverRate: number
+  /** 流通市值（元） */
+  circulatingMarketCap: number
+  /** 量比 */
+  volumeRatio: number
 }
 
-export async function fetchTencentMinute(code: string, timeoutMs = 8000): Promise<TencentMinuteResult> {
-  const empty = { points: [] as MinutePoint[], yestclose: 0, open: 0, limitUp: 0, limitDown: 0, name: '' }
+export async function fetchTencentM5(code: string, count = M5_BAR_COUNT, timeoutMs = 8000): Promise<TencentM5Result> {
+  const empty: TencentM5Result = {
+    bars: [],
+    yestclose: 0,
+    open: 0,
+    limitUp: 0,
+    limitDown: 0,
+    name: '',
+    volume: 0,
+    amount: 0,
+    turnoverRate: 0,
+    circulatingMarketCap: 0,
+    volumeRatio: 0,
+  }
   if (!/^(sh|sz)\d{6}$/.test(code)) return empty
 
   try {
     const payload = (await fetchJson(
-      `${TENCENT_MINUTE_URL}?code=${code}`,
+      `${TENCENT_MKLINE_URL}?param=${code},m5,,${count}`,
       timeoutMs,
-      { Referer: 'https://finance.qq.com/' }
+      { Referer: 'https://gu.qq.com/' }
     )) as Record<string, unknown>
 
     if ((payload as { code?: number }).code !== 0) return empty
-    const dataRoot = (payload as { data?: Record<string, unknown> }).data
-    if (!dataRoot) return empty
-
-    const stockData = dataRoot[code] as Record<string, unknown> | undefined
+    const stockData = ((payload as { data?: Record<string, unknown> }).data ?? {})[code] as
+      | Record<string, unknown>
+      | undefined
     if (!stockData) return empty
 
     // --- Extract metadata from the qt array ---
     // qt[code] is an array like ["1","贵州茅台","600519","1291.50","1307.88",...]
-    // Indices (1-indexed):
-    //   1  name
-    //   4  yestclose / preclose
-    //  48  limit-up price
-    //  49  limit-down price
+    // Zero-based indices (verified against live 2026-11-02 payloads):
+    //   1  name               36  volume (手)
+    //   4  yestclose          37  amount (万元)
+    //   5  open               38  turnover rate (%)
+    //   33 high               44  circulating market cap (亿元)
+    //   34 low                47  limit-up price
+    //  30  time               48  limit-down price
+    //                          49  volume ratio
     const qt = (stockData.qt as Record<string, unknown>) ?? {}
     const qtArr = qt[code] as string[] | undefined
     let yestclose = 0
@@ -137,66 +213,98 @@ export async function fetchTencentMinute(code: string, timeoutMs = 8000): Promis
     let limitUp = 0
     let limitDown = 0
     let name = ''
-    if (Array.isArray(qtArr) && qtArr.length >= 49) {
+    let volume = 0
+    let amount = 0
+    let turnoverRate = 0
+    let circulatingMarketCap = 0
+    let volumeRatio = 0
+    if (Array.isArray(qtArr) && qtArr.length >= 50) {
       name = qtArr[1] ?? ''
       yestclose = Number(qtArr[4]) || 0
       open = Number(qtArr[5]) || 0
       limitUp = Number(qtArr[47]) || 0
       limitDown = Number(qtArr[48]) || 0
+      volume = Number(qtArr[36]) || 0
+      amount = (Number(qtArr[37]) || 0) * 1e4 // 万元 → 元
+      turnoverRate = Number(qtArr[38]) || 0
+      circulatingMarketCap = (Number(qtArr[44]) || 0) * 1e8 // 亿元 → 元
+      volumeRatio = Number(qtArr[49]) || 0
     }
 
-    // --- Parse minute data ---
-    // data.data contains the raw minute string array
-    const innerData = stockData.data as Record<string, unknown> | undefined
-    if (!innerData) return { points: [], yestclose, open, limitUp, limitDown, name }
-
-    const rawArray = innerData.data as string[] | undefined
-    if (!Array.isArray(rawArray) || rawArray.length === 0) {
-      return { points: [], yestclose, open, limitUp, limitDown, name }
+    // --- Parse m5 bars ---
+    // Each row: [time, open, close, high, low, volume(手), ...]
+    //   time is "YYYYMMDDHHMM" (Tencent) or "YYYY-MM-DD HH:MM" (Eastmoney).
+    const rawBars = stockData.m5 as unknown[] | undefined
+    const bars: KlineBar[] = []
+    if (Array.isArray(rawBars)) {
+      for (const raw of rawBars) {
+        if (!Array.isArray(raw) || raw.length < 6) continue
+        const parsed = normalizeKlineTime(String(raw[0] ?? ''))
+        const openValue = Number(raw[1]) || 0
+        const closeValue = Number(raw[2]) || 0
+        const highValue = Number(raw[3]) || 0
+        const lowValue = Number(raw[4]) || 0
+        if (!parsed || openValue <= 0 || closeValue <= 0 || highValue <= 0 || lowValue <= 0) continue
+        bars.push({
+          date: parsed.date,
+          time: parsed.time,
+          open: openValue,
+          close: closeValue,
+          high: highValue,
+          low: lowValue,
+          volume: Number(raw[5]) || 0,
+          // Placeholder: `withCompletion` re-derives this against the exchange clock.
+          completed: true,
+        })
+      }
     }
 
-    const points: MinutePoint[] = []
-    let vwapSum = 0    // Σ(amount) — actual turnover (元)
-    let vwapShares = 0 // Σ(shares) — cumulative shares (股)
-    for (const entry of rawArray) {
-      // Format: "HHMM price volume amount"
-      //   price  = minute close price (元/股)
-      //   volume = trading volume in 手 (lots), 1 lot = 100 shares
-      //   amount = actual turnover (元)
-      const parts = entry.split(' ')
-      if (parts.length < 4) continue
-      const rawTime = parts[0].trim()
-      const price = Number(parts[1]) || 0
-      const volume = Number(parts[2]) || 0  // 手 (lots)
-      const amount = Number(parts[3]) || 0  // 元
-      if (!rawTime || price <= 0) continue
-
-      // HHMM -> HH:mm
-      const time = rawTime.length === 4
-        ? `${rawTime.slice(0, 2)}:${rawTime.slice(2)}`
-        : rawTime
-      vwapSum += amount
-      vwapShares += volume * 100  // 手 → 股
-
-      points.push({
-        time,
-        price,
-        volume,
-        // VWAP = Σ(amount) / Σ(shares) — uses the actual turnover amount
-        // from the API rather than price × volume, matching mainstream
-        // Chinese stock software (同花顺, 东方财富, etc.).
-        // Note: API volume is in 手 (lots), converted to 股 (shares) ×100.
-        avgPrice: vwapShares > 0 ? vwapSum / vwapShares : price,
-      })
-    }
-
-    return { points, yestclose, open, limitUp, limitDown, name }
+    return { bars, yestclose, open, limitUp, limitDown, name, volume, amount, turnoverRate, circulatingMarketCap, volumeRatio }
   } catch {
     return empty
   }
 }
 
-// ── Fallback: Eastmoney minute API ──────────────────────────────────────
+// ── Daily K-line (reference prices: yesterday + 60-trading-day range) ────
+
+/**
+ * Fetch the daily K-line for the last `count` trading days (ascending).
+ *
+ * Primary: Tencent `fqkline` with `qfq` (前复权) — adjusted, so the 60-day
+ * high/low stays comparable across dividends. Fallback: Eastmoney `klt=101`
+ * with `fqt=1` (also 前复权) when Tencent is unavailable or empty.
+ *
+ * The newest row may be today's still-forming session during trading hours;
+ * `referencePrices` treats that row as "today" and steps back one for 昨日.
+ */
+export async function fetchDailyKline(code: string, count = DAILY_BAR_COUNT, timeoutMs = 8000): Promise<DailyBar[]> {
+  if (!/^(sh|sz)\d{6}$/.test(code)) return []
+  try {
+    const payload = (await fetchJson(
+      `${TENCENT_DAILY_KLINE_URL}?param=${code},day,,,${count},qfq`,
+      timeoutMs,
+      { Referer: 'https://gu.qq.com/' }
+    )) as Record<string, unknown>
+    if ((payload as { code?: number }).code !== 0) return []
+    const stockData = ((payload as { data?: Record<string, unknown> }).data ?? {})[code] as
+      | Record<string, unknown>
+      | undefined
+    if (!stockData) return []
+    // 前复权列名 qfqday；部分标的无复权数据时退回原始 day 列。
+    const rows = Array.isArray(stockData.qfqday)
+      ? stockData.qfqday
+      : Array.isArray(stockData.day)
+        ? stockData.day
+        : []
+    const bars = parseTencentDailyRows(rows)
+    if (bars.length > 0) return bars
+  } catch {
+    // Fall through to the Eastmoney fallback.
+  }
+  return fetchEastmoneyDaily(code, count, timeoutMs)
+}
+
+// ── Fallback: Eastmoney 5-min K-line API ────────────────────────────────
 
 function eastmoneySecid(code: string): string {
   const digits = code.slice(2)
@@ -204,101 +312,217 @@ function eastmoneySecid(code: string): string {
 }
 
 /**
- * Fetch the intraday minute line (1-minute closes) through Eastmoney.
+ * Fetch the 5-minute K-line through Eastmoney (klt=5).
  * Used as fallback when the Tencent API is unavailable.
  */
-export async function fetchEastmoneyMinute(code: string, timeoutMs = 8000): Promise<MinutePoint[]> {
+export async function fetchEastmoneyM5(code: string, count = M5_BAR_COUNT, timeoutMs = 8000): Promise<KlineBar[]> {
   if (!/^(sh|sz)\d{6}$/.test(code)) return []
   const url = new URL(EASTMONEY_KLINE_URL)
   url.searchParams.set('secid', eastmoneySecid(code))
   url.searchParams.set('fields1', 'f1,f2,f3,f4,f5,f6')
   url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58')
-  url.searchParams.set('klt', '1')
+  url.searchParams.set('klt', '5')
   url.searchParams.set('fqt', '1')
   url.searchParams.set('beg', '0')
   url.searchParams.set('end', '20500101')
-  url.searchParams.set('lmt', '1000000')
+  url.searchParams.set('lmt', String(count))
   const payload = (await fetchJson(url.toString(), timeoutMs, {
     Referer: 'http://quote.eastmoney.com/',
   })) as { data?: { klines?: string[] } }
   const klines = payload.data?.klines
   if (!Array.isArray(klines)) return []
 
-  const points: MinutePoint[] = []
-  let vwapSum = 0
-  let vwapShares = 0
+  const bars: KlineBar[] = []
   for (const line of klines) {
     // Eastmoney kline format (fields2=f51,f52,f53,f54,f55,f56,f57,f58):
     //   date,open,close,high,low,volume(手),amount(元),...
     const parts = line.split(',')
     if (parts.length < 7) continue
-    const time = parts[0].split(' ')[1] ?? ''
-    const price = Number(parts[2]) || 0
-    const volume = Number(parts[5]) || 0  // 手 (lots)
-    const amount = Number(parts[6]) || 0  // 元
-    if (!time || price <= 0) continue
-    vwapSum += amount
-    vwapShares += volume * 100  // 手 → 股
-    points.push({
-      time,
-      price,
-      volume,
-      // VWAP = Σ(amount) / Σ(shares) — uses actual turnover amount.
-      avgPrice: vwapShares > 0 ? vwapSum / vwapShares : price,
+    const parsed = normalizeKlineTime(parts[0])
+    const open = Number(parts[1]) || 0
+    const close = Number(parts[2]) || 0
+    const high = Number(parts[3]) || 0
+    const low = Number(parts[4]) || 0
+    if (!parsed || open <= 0 || close <= 0 || high <= 0 || low <= 0) continue
+    bars.push({
+      date: parsed.date,
+      time: parsed.time,
+      open,
+      close,
+      high,
+      low,
+      volume: Number(parts[5]) || 0,
+      // Placeholder: `withCompletion` re-derives this against the exchange clock.
+      completed: true,
     })
   }
-  return points
+  return bars
 }
 
-// ── Daily K-line (Sina) for MA computation ─────────────────────────────
-
-/** Fetch recent daily closes through Sina (for MA computation). */
-export async function fetchDailyKline(code: string, count = 30, timeoutMs = 8000): Promise<DailyClose[]> {
-  if (!/^(sh|sz)\d{6}$/.test(code)) return []
-  const url = new URL(SINA_DAILY_URL)
-  url.searchParams.set('symbol', code)
-  url.searchParams.set('scale', '240')
-  url.searchParams.set('ma', 'no')
-  url.searchParams.set('datalen', String(count))
+/**
+ * Fetch the daily K-line through Eastmoney (klt=101, 前复权 fqt=1).
+ * Fallback used when the Tencent fqkline endpoint is unavailable.
+ */
+async function fetchEastmoneyDaily(code: string, count: number, timeoutMs: number): Promise<DailyBar[]> {
+  const url = new URL(EASTMONEY_KLINE_URL)
+  url.searchParams.set('secid', eastmoneySecid(code))
+  url.searchParams.set('fields1', 'f1,f2,f3,f4,f5,f6')
+  url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58')
+  url.searchParams.set('klt', '101')
+  url.searchParams.set('fqt', '1')
+  url.searchParams.set('beg', '0')
+  url.searchParams.set('end', '20500101')
+  url.searchParams.set('lmt', String(count))
   const payload = (await fetchJson(url.toString(), timeoutMs, {
-    Referer: 'https://finance.sina.com.cn/',
-  })) as unknown
-  if (!Array.isArray(payload)) return []
-  const result: DailyClose[] = []
-  for (const item of payload) {
-    if (typeof item !== 'object' || item === null) continue
-    const record = item as Record<string, unknown>
-    const date = String(record.day ?? '')
-    const close = Number(record.close) || 0
-    if (date && close > 0) result.push({ date, close })
-  }
-  return result
+    Referer: 'http://quote.eastmoney.com/',
+  })) as { data?: { klines?: string[] } }
+  const klines = payload.data?.klines
+  if (!Array.isArray(klines)) return []
+  return parseEastmoneyDailyLines(klines)
 }
 
 // ── Utility helpers ────────────────────────────────────────────────────
 
-/** Today's date in YYYY-MM-DD (local time). */
-function todayString(): string {
-  const now = new Date()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${now.getFullYear()}-${month}-${day}`
+/**
+ * Normalize a K-line timestamp to `{ date, time }`.
+ * Accepts both the compact Tencent form ("202610231335") and the dashed
+ * Eastmoney form ("2026-10-23 13:35"). Returns null for anything else.
+ */
+export function normalizeKlineTime(raw: string): { date: string; time: string } | null {
+  const digits = raw.replace(/\D/g, '')
+  const match = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(digits)
+  if (!match) return null
+  return { date: `${match[1]}-${match[2]}-${match[3]}`, time: `${match[4]}:${match[5]}` }
 }
 
 /**
- * Merge the latest realtime price into the daily closes: when the last daily
- * bar is today, its close is replaced by the live price; otherwise the live
- * price is appended. MA lines are then computed over closes + latest.
+ * Filter an ascending bar series down to the latest trading day's bars.
+ * The 5-minute chart is an intraday view, so only the most recent date's
+ * bars (up to 48) are charted.
  */
-export function closesWithLatest(daily: DailyClose[], latest: number): number[] {
-  const closes = daily.map((item) => item.close)
-  const last = daily.at(-1)
-  if (last && last.date === todayString()) {
-    closes[closes.length - 1] = latest
-  } else {
-    closes.push(latest)
+export function barsForLatestDate(bars: KlineBar[]): KlineBar[] {
+  const lastDate = bars.at(-1)?.date
+  if (!lastDate) return []
+  return bars.filter((bar) => bar.date === lastDate)
+}
+
+/**
+ * Parse Tencent fqkline rows into daily bars.
+ * Each row: [date, open, close, high, low, volume(手), ...] (ascending).
+ */
+export function parseTencentDailyRows(rows: unknown[]): DailyBar[] {
+  const bars: DailyBar[] = []
+  for (const raw of rows) {
+    if (!Array.isArray(raw) || raw.length < 5) continue
+    const date = String(raw[0] ?? '')
+    const high = Number(raw[3]) || 0
+    const low = Number(raw[4]) || 0
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || high <= 0 || low <= 0) continue
+    bars.push({ date, high, low })
   }
-  return closes
+  return bars
+}
+
+/**
+ * Parse Eastmoney daily K-line lines into daily bars.
+ * Each line: date,open,close,high,low,volume(手),amount(元),... (ascending).
+ */
+export function parseEastmoneyDailyLines(lines: string[]): DailyBar[] {
+  const bars: DailyBar[] = []
+  for (const line of lines) {
+    const parts = line.split(',')
+    if (parts.length < 5) continue
+    const date = parts[0]
+    const high = Number(parts[3]) || 0
+    const low = Number(parts[4]) || 0
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || high <= 0 || low <= 0) continue
+    bars.push({ date, high, low })
+  }
+  return bars
+}
+
+/** Today's calendar date in Asia/Shanghai as YYYY-MM-DD. */
+export function chinaDateString(now = Date.now()): string {
+  return new Date(now + 8 * 3600_000).toISOString().slice(0, 10)
+}
+
+/**
+ * Derive yesterday's high/low and the 60-trading-day high/low from an
+ * ascending daily K-line series.
+ *
+ * 昨日 rule: when the newest daily bar belongs to *today's* calendar date
+ * (a live session — the bar may still be forming), the previous trading day
+ * is the second-to-last bar; otherwise (weekend / holiday / pre-open, where
+ * no bar exists for today) the latest bar IS the previous trading day.
+ *
+ * The 60-trading-day window includes the latest bar (today when trading),
+ * so "创 60 日新高/新低" checks behave live. All values are 0 when missing
+ * (e.g. a single-bar new listing has no 昨日).
+ */
+export function referencePrices(
+  daily: DailyBar[],
+  today: string
+): { yestHigh: number; yestLow: number; high60: number; low60: number } {
+  const empty = { yestHigh: 0, yestLow: 0, high60: 0, low60: 0 }
+  if (daily.length === 0) return empty
+
+  const prevIndex = daily[daily.length - 1].date === today ? daily.length - 2 : daily.length - 1
+  let yestHigh = 0
+  let yestLow = 0
+  if (prevIndex >= 0) {
+    yestHigh = daily[prevIndex].high
+    yestLow = daily[prevIndex].low
+  }
+
+  let high60 = -Infinity
+  let low60 = Infinity
+  for (const bar of daily) {
+    high60 = Math.max(high60, bar.high)
+    low60 = Math.min(low60, bar.low)
+  }
+  return { yestHigh, yestLow, high60, low60 }
+}
+
+/** Parse a "YYYY-MM-DD HH:mm[:ss]" exchange time as Asia/Shanghai epoch ms. */
+export function parseChinaDateTime(text: string): number | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text.trim())
+  if (!match) return undefined
+  const [, year, month, day, hour, minute, second] = match
+  const utc = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    second === undefined ? 0 : Number(second)
+  )
+  const check = new Date(utc)
+  if (
+    check.getUTCFullYear() !== Number(year) ||
+    check.getUTCMonth() + 1 !== Number(month) ||
+    check.getUTCDate() !== Number(day) ||
+    check.getUTCHours() !== Number(hour) ||
+    check.getUTCMinutes() !== Number(minute)
+  ) {
+    return undefined
+  }
+  return utc - 8 * 60 * 60_000
+}
+
+/**
+ * Mark each bar with its completed state: a 5-minute bucket is closed once
+ * the exchange clock (from the quote snapshot time) reaches the bucket's end
+ * time. Historical days are therefore always completed; during a live session
+ * only the bars up to the current bucket are. Without a parseable quote time
+ * no bar is claimed to be "in progress" (`completed: true` for all).
+ */
+export function withCompletion(bars: KlineBar[], quoteTime: string): KlineBar[] {
+  const quoteAt = parseChinaDateTime(quoteTime)
+  if (quoteAt === undefined) return bars.map((bar) => ({ ...bar, completed: true }))
+  return bars.map((bar) => {
+    const barEnd = parseChinaDateTime(`${bar.date} ${bar.time}`)
+    return { ...bar, completed: barEnd === undefined || quoteAt >= barEnd }
+  })
 }
 
 /** Simple moving average over the last `period` closes. */
@@ -315,61 +539,83 @@ export function calcMA(closes: number[], period: number): number | null {
  * Assemble the full detail for one stock code.
  *
  * Priority:
- *   1. Tencent minute API — returns points + yestclose + limit prices in
- *      a single HTTP call. Falls back to Eastmoney when empty.
- *   2. Sina daily K-line — for MA5/MA10/MA20.
- *   3. The external `quote` (from Sina live quote) is used *only* as a
- *      fallback for name / yestclose when Tencent provides neither.
+ *   1. Tencent 5-min K-line API — returns bars + daily trading data
+ *      (volume / amount / turnover / market cap / volume ratio / limits /
+ *      preclose) in a single HTTP call. Falls back to Eastmoney bars + the
+ *      old qt.gtimg.cn realtime quote when empty.
+ *   2. The external `quote` (from Sina live quote) is used *only* as a
+ *      fallback for name / yestclose / high / low when Tencent provides
+ *      neither.
  */
 export async function fetchStockDetail(
   code: string,
   quote: Quote | undefined,
   timeoutMs = 8000
 ): Promise<StockDetail> {
-  // Fetch primary minute data (Tencent) and daily K-line (Sina) in parallel.
-  // If Tencent returns empty, fall back to Eastmoney (sequential).
-  const [tencent, extraQuotes] = await Promise.all([
-    fetchTencentMinute(code, timeoutMs),
-    fetchEastMoneyExtraQuotes(code, timeoutMs),
+  // Daily K-line is an independent supplement (reference prices); never block
+  // the main 5-min path on it — a failure degrades to zero values.
+  const [tencent, daily] = await Promise.all([
+    fetchTencentM5(code, M5_BAR_COUNT, timeoutMs),
+    fetchDailyKline(code, DAILY_BAR_COUNT, timeoutMs).catch(() => [] as DailyBar[]),
   ])
-  let minute: MinutePoint[]
+  let bars: KlineBar[]
   let yestclose: number
   let limitUp: number
   let limitDown: number
   let name: string
+  let extras: TradingExtras
 
-  if (tencent.points.length > 0) {
-    // Tencent has data — use it
-    minute = tencent.points
+  if (tencent.bars.length > 0) {
+    // Tencent has data — use it (its qt metadata carries the trading data).
+    bars = tencent.bars
     yestclose = tencent.yestclose
     limitUp = tencent.limitUp
     limitDown = tencent.limitDown
     name = tencent.name
+    extras = {
+      volume: tencent.volume,
+      amount: tencent.amount,
+      turnoverRate: tencent.turnoverRate,
+      circulatingMarketCap: tencent.circulatingMarketCap,
+      volumeRatio: tencent.volumeRatio,
+    }
   } else {
-    // Tencent failed or returned empty — fall back to Eastmoney
-    // and fetch limit prices separately via the old qt.gtimg.cn endpoint.
-    const [emMinute, limitPrices] = await Promise.all([
-      fetchEastmoneyMinute(code, timeoutMs).catch(() => [] as MinutePoint[]),
-      fetchLimitPricesFromQt(code, timeoutMs),
+    // Tencent failed or returned empty — fall back to Eastmoney bars and
+    // fetch the realtime quote (limits + trading data) via qt.gtimg.cn.
+    const [emBars, qtQuote] = await Promise.all([
+      fetchEastmoneyM5(code, M5_BAR_COUNT, timeoutMs).catch(() => [] as KlineBar[]),
+      fetchQtRealtime(code, timeoutMs),
     ])
-    minute = emMinute
+    bars = emBars
     yestclose = quote?.yestclose ?? 0
-    limitUp = limitPrices.limitUp
-    limitDown = limitPrices.limitDown
+    limitUp = qtQuote.limitUp
+    limitDown = qtQuote.limitDown
     name = quote?.name ?? ''
+    extras = qtQuote.extras
   }
 
-  // Fetch daily K-line (always needed for MA)
-  const daily = await fetchDailyKline(code, 30, timeoutMs).catch(() => [] as DailyClose[])
-
-  const prices = minute.map((p) => p.price)
-  const latest = prices.at(-1) ?? quote?.price ?? 0
-  const closes = closesWithLatest(daily, latest)
+  // The intraday chart only shows the latest trading day's 5-min bars; the
+  // days before it are the MA warmup (5-minute closes, ascending).
+  const kline5 = withCompletion(barsForLatestDate(bars), quote?.time ?? '')
+  const warmupCloses = bars
+    .filter((bar) => bar.date !== kline5.at(-1)?.date)
+    .map((bar) => bar.close)
+  const latest = kline5.at(-1)?.close ?? quote?.price ?? 0
+  const closes = [...warmupCloses, ...kline5.map((bar) => bar.close)]
 
   // High/low: prefer Sina quote (reflects day's true range), fall back to
-  // minute range.
-  const high = quote?.high && quote.high > 0 ? quote.high : (prices.length > 0 ? Math.max(...prices) : 0)
-  const low = quote?.low && quote.low > 0 ? quote.low : (prices.length > 0 ? Math.min(...prices) : 0)
+  // the 5-min K-line range.
+  const highs = kline5.map((bar) => bar.high)
+  const lows = kline5.map((bar) => bar.low)
+  const high = quote?.high && quote.high > 0 ? quote.high : (highs.length > 0 ? Math.max(...highs) : 0)
+  const low = quote?.low && quote.low > 0 ? quote.low : (lows.length > 0 ? Math.min(...lows) : 0)
+
+  // 成交量: prefer the realtime snapshot figure (includes auction prints);
+  // fall back to the sum of today's 5-minute bars when the snapshot lacks it.
+  const volume =
+    extras.volume > 0 ? extras.volume : kline5.reduce((sum, bar) => sum + bar.volume, 0)
+
+  const refs = referencePrices(daily, chinaDateString())
 
   return {
     code,
@@ -382,27 +628,67 @@ export async function fetchStockDetail(
     limitUp,
     limitDown,
     time: quote?.time ?? '',
-    minute,
+    kline5,
+    klineWarmup: warmupCloses,
     ma: {
       ma5: calcMA(closes, 5),
       ma10: calcMA(closes, 10),
       ma20: calcMA(closes, 20),
+      ma30: calcMA(closes, 30),
+      ma60: calcMA(closes, 60),
     },
-    daily,
-    circulatingMarketCap: extraQuotes.circulatingMarketCap,
-    volumeRatio: extraQuotes.volumeRatio,
+    circulatingMarketCap: extras.circulatingMarketCap,
+    volumeRatio: extras.volumeRatio,
+    volume,
+    amount: extras.amount,
+    turnoverRate: extras.turnoverRate,
+    yestHigh: refs.yestHigh,
+    yestLow: refs.yestLow,
+    high60: refs.high60,
+    low60: refs.low60,
   }
 }
 
 // ── Legacy limit-price fetcher (fallback only) ─────────────────────────
 
 /**
- * Fetch limit-up / limit-down prices from Tencent realtime quote (fields
- * 48/49). Used only when the primary Tencent minute API failed, as a
- * companion to the Eastmoney fallback.
+ * Daily trading-data extras shared by every source path.
+ * All values are 0 when the source does not provide them.
  */
-async function fetchLimitPricesFromQt(code: string, timeoutMs = 8000): Promise<{ limitUp: number; limitDown: number }> {
-  const result = { limitUp: 0, limitDown: 0 }
+export interface TradingExtras {
+  /** 成交量（手） */
+  volume: number
+  /** 成交额（元） */
+  amount: number
+  /** 换手率（%） */
+  turnoverRate: number
+  /** 流通市值（元） */
+  circulatingMarketCap: number
+  /** 量比 */
+  volumeRatio: number
+}
+
+const emptyTradingExtras: TradingExtras = {
+  volume: 0,
+  amount: 0,
+  turnoverRate: 0,
+  circulatingMarketCap: 0,
+  volumeRatio: 0,
+}
+
+/**
+ * Fetch the Tencent realtime quote via the old qt.gtimg.cn endpoint
+ * (limits + daily trading data). Used only when the primary Tencent
+ * 5-min K-line API failed, as a companion to the Eastmoney fallback.
+ * Field indices match the quote line format shared with the mkline `qt`
+ * array (verified against live payloads).
+ */
+async function fetchQtRealtime(code: string, timeoutMs = 8000): Promise<{
+  limitUp: number
+  limitDown: number
+  extras: TradingExtras
+}> {
+  const result = { limitUp: 0, limitDown: 0, extras: { ...emptyTradingExtras } }
   if (!/^(sh|sz)\d{6}$/.test(code)) return result
   try {
     const controller = new AbortController()
@@ -431,6 +717,13 @@ async function fetchLimitPricesFromQt(code: string, timeoutMs = 8000): Promise<{
       const fields = text.slice(openQuote + 1, closeQuote).split('~')
       result.limitUp = Number(fields[47]) || 0
       result.limitDown = Number(fields[48]) || 0
+      result.extras = {
+        volume: Number(fields[36]) || 0,
+        amount: (Number(fields[37]) || 0) * 1e4, // 万元 → 元
+        turnoverRate: Number(fields[38]) || 0,
+        circulatingMarketCap: (Number(fields[44]) || 0) * 1e8, // 亿元 → 元
+        volumeRatio: Number(fields[49]) || 0,
+      }
     } finally {
       clearTimeout(timer)
     }
@@ -438,31 +731,4 @@ async function fetchLimitPricesFromQt(code: string, timeoutMs = 8000): Promise<{
     // Silently return zeros
   }
   return result
-}
-
-// ── Eastmoney extra quotes (circulating market cap, volume ratio) ──────
-
-/**
- * Fetch circulating market cap and volume ratio from Eastmoney.
- */
-async function fetchEastMoneyExtraQuotes(code: string, timeoutMs = 8000): Promise<{
-  circulatingMarketCap: number
-  volumeRatio: number
-}> {
-  const result = { circulatingMarketCap: 0, volumeRatio: 0 }
-  if (!/^(sh|sz)\d{6}$/.test(code)) return result
-  try {
-    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${eastmoneySecid(code)}&fields=f41,f42,f20,f21,f37,f10&invt=2&fltt=2`
-    const payload = (await fetchJson(url, timeoutMs, {
-      Referer: 'http://quote.eastmoney.com/',
-    })) as { data?: { f21?: number; f20?: number; f10?: number } }
-    const data = payload.data
-    if (!data) return result
-    return {
-      circulatingMarketCap: data.f21 ?? data.f20 ?? 0,
-      volumeRatio: data.f10 ?? 0,
-    }
-  } catch {
-    return result
-  }
 }

@@ -59,6 +59,50 @@ export function reorder(kind: string, args: Record<string, unknown>): Promise<{ 
   return call('reorder', { kind, args })
 }
 
+export interface AlertRule {
+  id: string
+  code: string
+  kind: 'price' | 'percent'
+  direction: 'above' | 'below'
+  threshold: number
+  enabled: boolean
+}
+
+export interface AlertEvent {
+  id: string
+  ruleId: string
+  code: string
+  price: number
+  percent: number
+  kind?: 'price' | 'percent'
+  direction?: 'above' | 'below'
+  threshold?: number
+  quoteTime: string
+  triggeredAt: string
+}
+
+export type NewAlertRule = Pick<AlertRule, 'code' | 'kind' | 'direction' | 'threshold'>
+
+export function fetchAlertRules(): Promise<{ rules: AlertRule[] }> {
+  return call('alertRules', {})
+}
+
+export function createAlertRule(rule: NewAlertRule): Promise<{ ok: true; rule: AlertRule }> {
+  return call('alertCreate', rule)
+}
+
+export function deleteAlertRule(id: string): Promise<{ ok: true }> {
+  return call('alertDelete', { id })
+}
+
+export function fetchAlertEvents(): Promise<{ events: AlertEvent[]; today: AlertEvent[] }> {
+  return call('alertEvents', {})
+}
+
+export function claimAlertEvents(): Promise<{ events: AlertEvent[] }> {
+  return call('alertClaim', {})
+}
+
 /** Market category of a code (client-side mirror; keeps the tree A-only). */
 export function categoryOf(code: string): 'A' | undefined {
   if (/^(sh|sz|bj)/.test(code)) return 'A'

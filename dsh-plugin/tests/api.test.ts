@@ -61,9 +61,11 @@ describe('isTrustedApiRequest', () => {
     assert.equal(isTrustedApiRequest(local), true)
   })
 
-  it('rejects foreign hosts', () => {
+  it('rejects foreign hosts, cross-origin browsers and non-loopback peers', () => {
     const req = { headers: { host: 'evil.example.com' } } as IncomingMessage
     assert.equal(isTrustedApiRequest(req), false)
+    assert.equal(isTrustedApiRequest({ headers: { host: '127.0.0.1:3080', origin: 'https://evil.example' } } as IncomingMessage), false)
+    assert.equal(isTrustedApiRequest({ headers: { host: '127.0.0.1:3080' }, socket: { remoteAddress: '10.0.0.10' } } as unknown as IncomingMessage), false)
   })
 })
 

@@ -4,6 +4,7 @@
  * the `/leek-fund/api` prefix; the client half fetches it from the browser.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { alertPath, createAlertStore, type AlertStore } from './alerts.js'
 import { fetchStockDetail } from './detail.js'
 import { fetchQuotes, fetchSpeedRanking } from './quote.js'
 import { searchAStocks } from './search.js'
@@ -13,6 +14,7 @@ import {
   createGroup,
   deleteGroup,
   moveStockToGroup,
+  normalizeCode,
   removeStock,
   renameGroup,
   reorderGroup,
@@ -25,14 +27,15 @@ import {
 import type { Quote, State } from './types.js'
 
 /** Fixed indices pinned to the top ticker (Hermes parity). */
-export const DEFAULT_INDEX_CODES = ['sh000001', 'sz399006', 'sh000680', 'b_NKY', 'b_KOSPI']
+export const DEFAULT_INDEX_CODES = ['sh000001', 'sz399006', 'sh000688', 'b_NKY', 'b_KOSPI']
 
 export interface ApiDeps {
   store: StateStore
   timeoutMs: number
+  alerts?: AlertStore
 }
 
-/** Short-lived detail cache (intraday data is minute-granular). */
+/** Short-lived detail cache (intraday K-line data). */
 const DETAIL_CACHE_TTL_MS = 30_000
 const detailCache = new Map<string, { at: number; detail: unknown }>()
 
@@ -40,7 +43,7 @@ async function fetchDetailCached(code: string, deps: ApiDeps): Promise<unknown> 
   const cached = detailCache.get(code)
   if (cached && Date.now() - cached.at < DETAIL_CACHE_TTL_MS) return cached.detail
   // Fetch the Sina live quote as a lightweight fallback for name / high/low
-  // in case the primary Tencent minute API fails.  This is *not* required
+  // in case the primary Tencent 5-min K-line API fails.  This is *not* required
   // for the Tencent path — fetchStockDetail uses it only as a last resort.
   let quote: Quote | undefined
   try {
@@ -64,7 +67,12 @@ export class ApiError extends Error {
 
 export async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = []
-  for await (const chunk of req) chunks.push(chunk as Buffer)
+  let size = 0
+  for await (const chunk of req) {
+    size += (chunk as Buffer).byteLength
+    if (size > 16_384) throw new ApiError(413, 'request body too large')
+    chunks.push(chunk as Buffer)
+  }
   const text = Buffer.concat(chunks).toString('utf8')
   if (!text) return {}
   try {
@@ -94,14 +102,24 @@ export function writeError(res: ServerResponse, error: unknown): void {
     writeJson(res, error.status, { ok: false, error: error.message })
     return
   }
-  writeJson(res, 500, { ok: false, error: String(error) })
+  writeJson(res, 500, { ok: false, error: 'internal server error' })
 }
 
 /** Loopback-only trust fence (browser fetches arrive from the same host). */
 export function isTrustedApiRequest(req: IncomingMessage): boolean {
   const host = req.headers.host ?? ''
-  const hostname = host.split(':')[0].toLowerCase()
-  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1'
+  let hostname: string
+  try { hostname = new URL(`http://${host}`).hostname.toLowerCase().replace(/^\[|\]$/g, '') }
+  catch { return false }
+  if (hostname !== '127.0.0.1' && hostname !== 'localhost' && hostname !== '::1') return false
+  const address = req.socket?.remoteAddress
+  if (address && !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address)) return false
+  const origin = req.headers.origin
+  if (origin) {
+    try { if (new URL(origin).host.toLowerCase() !== host.toLowerCase()) return false }
+    catch { return false }
+  }
+  return true
 }
 
 function requireString(value: unknown, name: string): string {
@@ -203,6 +221,37 @@ export async function handleApiRequest(
   try {
     const payload = await readJsonBody(req)
     switch (method) {
+      case 'alertRules':
+        writeOk(res, { rules: await (deps.alerts ?? createAlertStore(alertPath(deps.store))).listRules() })
+        return
+      case 'alertCreate': {
+        const alerts = deps.alerts ?? createAlertStore(alertPath(deps.store))
+        const code = normalizeCode((payload as { code?: unknown }).code)
+        if (!code) throw new ApiError(400, 'invalid stock code')
+        const state = await deps.store.load()
+        if (!state.stocks.includes(code)) throw new ApiError(400, `股票不在自选列表中: ${code}`)
+        const rule = await alerts.createRule(payload as unknown as Parameters<AlertStore['createRule']>[0])
+        writeOk(res, { ok: true, rule })
+        return
+      }
+      case 'alertDelete': {
+        const deleted = await (deps.alerts ?? createAlertStore(alertPath(deps.store))).deleteRule(requireString(payload.id, 'id'))
+        if (!deleted) throw new ApiError(404, 'alert rule not found')
+        writeOk(res, { ok: true })
+        return
+      }
+      case 'alertEvents': {
+        const events = await (deps.alerts ?? createAlertStore(alertPath(deps.store))).listEvents()
+        const chinaDate = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
+        writeOk(res, { events, today: events.filter((event) => event.quoteTime.startsWith(chinaDate)).slice(0, 3) })
+        return
+      }
+      case 'alertClaim': {
+        const limit = payload.limit === undefined ? 10 : payload.limit
+        if (typeof limit !== 'number') throw new ApiError(400, 'invalid claim limit')
+        writeOk(res, { events: await (deps.alerts ?? createAlertStore(alertPath(deps.store))).claimEvents(limit) })
+        return
+      }
       case 'snapshot':
         writeOk(res, await buildSnapshot(deps))
         return
@@ -225,6 +274,9 @@ export async function handleApiRequest(
         })
         if (!outcome!.ok) writeOk(res, { ok: false, error: outcome!.error })
         else {
+          if (op === 'remove') {
+            await (deps.alerts ?? createAlertStore(alertPath(deps.store))).deleteRulesForCode(requireString(args.code, 'code'))
+          }
           // groupCreate returns the new group id so the client can expand it.
           const data = op === 'groupCreate' ? { id: outcome!.state.groups.at(-1)?.id } : undefined
           writeOk(res, data ? { ok: true, data } : { ok: true })
@@ -277,6 +329,6 @@ export async function handleApiRequest(
         writeError(res, new ApiError(404, `unknown API method "${method}"`))
     }
   } catch (error) {
-    writeError(res, error)
+    writeError(res, error instanceof RangeError ? new ApiError(400, error.message) : error)
   }
 }

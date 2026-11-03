@@ -6,6 +6,7 @@
  * the canonical value into model-facing text.
  */
 import { defineTool, type ToolExecution } from '@deepseek-ai/dsh-tools'
+import { alertPath, createAlertStore, type AlertStore } from './alerts.js'
 import { fetchQuotes, formatQuoteLine } from './quote.js'
 import { searchAStocks } from './search.js'
 import {
@@ -27,6 +28,7 @@ import type { Quote, State } from './types.js'
 export interface ToolDeps {
   store: StateStore
   timeoutMs: number
+  alerts?: AlertStore
 }
 
 /** Run a mutating operation through the store and surface its result. */
@@ -67,6 +69,19 @@ const quoteObjectSchema = {
   },
 }
 
+const alertRuleSchema = {
+  type: 'object' as const,
+  additionalProperties: false,
+  properties: {
+    id: { type: 'string' as const, required: true as const },
+    code: { type: 'string' as const, required: true as const },
+    kind: { type: 'string' as const, required: true as const },
+    direction: { type: 'string' as const, required: true as const },
+    threshold: { type: 'number' as const, required: true as const },
+    enabled: { type: 'boolean' as const, required: true as const },
+  },
+}
+
 const groupObjectSchema = {
   type: 'object' as const,
   additionalProperties: false,
@@ -92,6 +107,7 @@ function renderQuotes(value: { quotes: Quote[]; failed: string[] }): string {
 
 export function defineTools(deps: ToolDeps) {
   const { store, timeoutMs } = deps
+  const alerts = deps.alerts ?? createAlertStore(alertPath(store))
 
   return [
     defineTool({
@@ -271,6 +287,7 @@ export function defineTools(deps: ToolDeps) {
       async execute(args) {
         const result = await runMutation(store, (state) => removeStock(state, args.code))
         const code = normalizeCode(args.code)
+        if (result.ok && code) await alerts.deleteRulesForCode(code)
         return { code: code || args.code, ok: result.ok, error: result.error }
       },
     }),
@@ -411,10 +428,10 @@ export function defineTools(deps: ToolDeps) {
 
     defineTool({
       name: 'stock_mark',
-      description: '切换股票持仓或关注标记。持仓和关注是叠加标记，不改变股票所在分组。',
+      description: '切换股票持仓、关注或重点关注标记；这些是叠加标记，不改变股票所在分组。',
       parameters: {
         code: { type: 'string', required: true, description: '股票代码，如 sh600000' },
-        mark: { type: 'string', enum: ['holding', 'watch'], required: true, description: '标记类型: holding=持仓, watch=关注' },
+        mark: { type: 'string', enum: ['holding', 'watch', 'focus'], required: true, description: '标记类型: holding=持仓, watch=关注, focus=重点关注' },
         value: { type: 'boolean', required: true, description: 'true 打上标记，false 取消标记' },
       },
       output: {
@@ -433,7 +450,7 @@ export function defineTools(deps: ToolDeps) {
           {
             type: 'text',
             text: value.ok
-              ? `已${value.value ? '打上' : '取消'}${value.mark === 'holding' ? '持仓' : '关注'}标记: ${value.code}`
+              ? `已${value.value ? '打上' : '取消'}${value.mark === 'holding' ? '持仓' : value.mark === 'watch' ? '关注' : '重点关注'}标记: ${value.code}`
               : `操作失败: ${value.error}`,
           },
         ],
@@ -441,6 +458,65 @@ export function defineTools(deps: ToolDeps) {
       async execute(args) {
         const result = await runMutation(store, (state) => setMark(state, args.code, args.mark, args.value))
         return { code: args.code, mark: args.mark, value: args.value, ok: result.ok, error: result.error }
+      },
+    }),
+
+    defineTool({
+      name: 'stock_alert_list',
+      description: '查看用户已经建立的股价或涨跌幅提醒规则；不创建新提醒。',
+      parameters: {},
+      output: {
+        schema: { type: 'object', additionalProperties: false, properties: {
+          rules: { type: 'array', required: true, items: alertRuleSchema },
+        } },
+        render: (_args, value) => [{ type: 'text', text: JSON.stringify(value.rules) }],
+      },
+      async execute() { return { rules: await alerts.listRules() } },
+    }),
+
+    defineTool({
+      name: 'stock_alert_create',
+      description: '仅在用户明确确认要创建提醒时使用。创建一条 A 股目标价格或当日涨跌幅提醒规则；每交易日每规则最多提醒一次。',
+      parameters: {
+        code: { type: 'string', required: true, description: 'A 股代码，如 sh600000' },
+        kind: { type: 'string', required: true, enum: ['price', 'percent'], description: '价格 price / 当日涨跌幅 percent' },
+        direction: { type: 'string', required: true, enum: ['above', 'below'], description: '达到或高于 above / 达到或低于 below' },
+        threshold: { type: 'number', required: true, description: '目标值；涨跌幅按百分数，如 2 代表 2%' },
+      },
+      output: {
+        schema: { type: 'object', additionalProperties: false, properties: {
+          ok: { type: 'boolean', required: true },
+          rule: alertRuleSchema,
+          error: { type: 'string' },
+        } },
+        render: (_args, value) => [{ type: 'text', text: value.ok ? `已创建提醒: ${value.rule?.id}` : `创建提醒失败: ${value.error}` }],
+      },
+      async execute(args) {
+        try {
+          const code = normalizeCode(args.code)
+          if (!code || !(await store.load()).stocks.includes(code)) {
+            return { ok: false, error: `股票不在自选列表中: ${String(args.code)}` }
+          }
+          return { ok: true, rule: await alerts.createRule(args) }
+        } catch (error) { if (error instanceof RangeError) return { ok: false, error: error.message }; throw error }
+      },
+    }),
+
+    defineTool({
+      name: 'stock_alert_delete',
+      description: '仅在用户明确要求删除提醒时使用。按规则 id 删除；历史触发事件仍保留。',
+      parameters: { id: { type: 'string', required: true, description: '提醒规则 id' } },
+      output: {
+        schema: { type: 'object', additionalProperties: false, properties: {
+          ok: { type: 'boolean', required: true }, error: { type: 'string' },
+        } },
+        render: (_args, value) => [{ type: 'text', text: value.ok ? '已删除提醒规则' : `删除提醒失败: ${value.error}` }],
+      },
+      async execute(args) {
+        try {
+          const removed = await alerts.deleteRule(args.id)
+          return removed ? { ok: true } : { ok: false, error: '提醒规则不存在' }
+        } catch (error) { if (error instanceof RangeError) return { ok: false, error: error.message }; throw error }
       },
     }),
   ]
