@@ -8,9 +8,8 @@
  *   axis tick sets and yestclose/limit references all use the single
  *   `priceToY` mapping from `kline-math.ts`, so a bar's true high/low can
  *   never be clipped while a tick at the same price sits inside the plot.
- *   The wicks themselves are the only high/low indication (per the
- *   hide-extremum-labels spec, no 最高/最低 labels or reconciliation bar are
- *   drawn).
+ *   Extremum labels are anchored to real bars; quote differences are reported
+ *   only for matching trading dates and never alter candle OHLC.
  *
  * The last, still-forming bar is flagged 进行中 based on `bar.completed`
  * (derived server-side from the exchange clock).
@@ -21,13 +20,14 @@ import { displayPrice, formatPercent } from '../quote.js'
 import {
   barExtremes,
   buildPriceScale,
+  extremeMismatch,
   maSeries,
   priceToY,
   tickDigitsFor,
   tickFor,
   yToPrice,
 } from '../kline-math.js'
-import { formatVolumeHands, formatYuanAmount } from '../trade-format.js'
+import { DailyPanel } from './DailyPanel.js'
 import s from './styles.module.css'
 
 export interface KlineBar {
@@ -51,6 +51,8 @@ export interface StockDetailData {
   open: number
   high: number
   low: number
+  snapshotHigh?: number
+  snapshotLow?: number
   yestclose: number
   limitUp: number
   limitDown: number
@@ -58,6 +60,7 @@ export interface StockDetailData {
   volumeRatio: number
   /** 今日成交量（手，含当前未收盘桶） */
   volume: number
+  volumeFromBars?: boolean
   /** 今日成交额（元） */
   amount: number
   /** 今日换手率（%） */
@@ -70,6 +73,8 @@ export interface StockDetailData {
   high60: number
   /** 近 60 个交易日最低价（含当前交易日，0 = 无数据） */
   low60: number
+  return5?: number | null
+  return20?: number | null
   time: string
   /** Latest trading day's bars, ascending (≤ 48). */
   kline5: KlineBar[]
@@ -88,8 +93,8 @@ export type DetailViewMode = 'daily' | 'kline'
 
 // ── Chart constants & colors ────────────────────────────────────────────
 
-const UP = '#e02e24'
-const DOWN = '#2e9e4f'
+const UP = '#d05d58'
+const DOWN = '#4e9a72'
 const GRAY = '#8a919c'
 const GRID = '#eef1f4'
 const REF = '#b7bdc7'
@@ -168,88 +173,8 @@ function fmtVolume(volume: number): string {
   return `${Math.round(volume).toLocaleString('zh-CN')} 手`
 }
 
-// ── Daily view ──────────────────────────────────────────────────────────
-
-function DailyPanel({ detail }: { detail: StockDetailData }): JSX.Element {
-  const price = detail.price
-  const updown = price - detail.yestclose
-  const percent = detail.yestclose > 0 ? (updown / detail.yestclose) * 100 : 0
-  const high = detail.high
-  const low = detail.low
-  const inRange = high > low && Number.isFinite(price)
-  const ratio = inRange ? clamp((price - low) / (high - low), 0, 1) : 0.5
-
-  const cells: Array<{ label: string; value: string; tone?: 'up' | 'down' | 'flat' }> = [
-    { label: '今开', value: detail.open > 0 ? fmtPrice(detail, detail.open) : '--' },
-    { label: '最高', value: high > 0 ? fmtPrice(detail, high) : '--', tone: 'up' },
-    { label: '最低', value: low > 0 ? fmtPrice(detail, low) : '--', tone: 'down' },
-    { label: '昨收', value: detail.yestclose > 0 ? fmtPrice(detail, detail.yestclose) : '--' },
-    { label: '涨停', value: detail.limitUp > 0 ? fmtPrice(detail, detail.limitUp) : '--', tone: 'up' },
-    { label: '跌停', value: detail.limitDown > 0 ? fmtPrice(detail, detail.limitDown) : '--', tone: 'down' },
-  ]
-  const trades: Array<{ label: string; value: string }> = [
-    // All real values come from the server payload; '--' only when the
-    // source lacks them (e.g. data provider outage).
-    { label: '成交量', value: formatVolumeHands(detail.volume) },
-    { label: '成交额', value: formatYuanAmount(detail.amount) },
-    { label: '换手率', value: detail.turnoverRate > 0 ? `${detail.turnoverRate.toFixed(2)}%` : '--' },
-    { label: '量比', value: detail.volumeRatio > 0 ? detail.volumeRatio.toFixed(2) : '--' },
-    {
-      label: '流通市值',
-      value: detail.circulatingMarketCap > 0 ? `${(detail.circulatingMarketCap / 1e8).toFixed(2)} 亿` : '--',
-    },
-  ]
-  const refs: Array<{ label: string; value: string; tone: 'up' | 'down' }> = [
-    { label: '昨高', value: detail.yestHigh > 0 ? fmtPrice(detail, detail.yestHigh) : '--', tone: 'up' },
-    { label: '昨低', value: detail.yestLow > 0 ? fmtPrice(detail, detail.yestLow) : '--', tone: 'down' },
-    { label: '60日最高', value: detail.high60 > 0 ? fmtPrice(detail, detail.high60) : '--', tone: 'up' },
-    { label: '60日最低', value: detail.low60 > 0 ? fmtPrice(detail, detail.low60) : '--', tone: 'down' },
-  ]
-  return (
-    <div className={s.dailyPanel}>
-      <div className={s.metricGrid}>
-        {cells.map((cell) => (
-          <div className={s.metricCell} key={cell.label}>
-            <span className={s.metricLabel}>{cell.label}</span>
-            <b className={cell.tone === 'up' ? s.toneUp : cell.tone === 'down' ? s.toneDown : undefined}>
-              {cell.value}
-            </b>
-          </div>
-        ))}
-      </div>
-
-      <div className={s.rangeCard}>
-        <div className={s.rangeHead}>
-          <span>日内价格位置</span>
-        </div>
-        <div className={s.rangeTrack} aria-hidden="true">
-          <span className={s.rangeFill} style={{ width: `${clamp(ratio * 100, 2, 98)}%` }} />
-          <span className={s.rangeDot} style={{ left: `${clamp(ratio * 100, 0, 100)}%` }} />
-        </div>
-        <div className={s.rangeLabels}>
-          <span>{low > 0 ? fmtPrice(detail, low) : '--'}</span>
-          <span>{high > 0 ? fmtPrice(detail, high) : '--'}</span>
-        </div>
-        <div className={s.refGrid}>
-          {refs.map((row) => (
-            <div className={s.refRow} key={row.label}>
-              <span>{row.label}</span>
-              <b className={row.tone === 'up' ? s.toneUp : s.toneDown}>{row.value}</b>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className={s.tradeGrid}>
-        {trades.map((row) => (
-          <div className={s.tradeLine} key={row.label}>
-            <span>{row.label}</span>
-            <b>{row.value}</b>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
+function validPrice(value: number): boolean {
+  return Number.isFinite(value) && value > 0
 }
 
 // ── K-line SVG chart ────────────────────────────────────────────────────
@@ -342,6 +267,29 @@ function KlineChart({ detail }: { detail: StockDetailData }): JSX.Element {
   const yestcloseY = priceToY(detail.yestclose, scale)
   const lastInProgress = !bars[bars.length - 1].completed
   const hovered = hoverIndex !== null && bars[hoverIndex] ? bars[hoverIndex] : null
+  const quoteDate = detail.time.slice(0, 10)
+  const barDate = bars[bars.length - 1]?.date ?? ''
+  const quoteHigh = detail.snapshotHigh ?? 0
+  const quoteLow = detail.snapshotLow ?? 0
+  const hasQuoteExtremes = validPrice(quoteHigh) || validPrice(quoteLow)
+  const canReconcile = quoteDate !== '' && quoteDate === barDate && hasQuoteExtremes
+  const mismatch = canReconcile
+    ? extremeMismatch(extremes.low, extremes.high, quoteLow, quoteHigh, tick)
+    : null
+  const mismatchParts = mismatch
+    ? [
+        mismatch.lowMismatch ? `行情最低 ${fmtPrice(detail, quoteLow)}，K 线最低 ${fmtPrice(detail, extremes.low)}` : '',
+        mismatch.highMismatch ? `行情最高 ${fmtPrice(detail, quoteHigh)}，K 线最高 ${fmtPrice(detail, extremes.high)}` : '',
+      ].filter(Boolean)
+    : []
+  const reconciliationWarn = mismatchParts.length > 0 || (quoteDate !== '' && barDate !== '' && quoteDate !== barDate)
+  const reconciliationText = canReconcile
+    ? mismatchParts.length > 0
+      ? `⚠ 快照与 K 线极值不同（不补造影线）：${mismatchParts.join('；')}`
+      : '✓ 快照已提供的高低价与 K 线极值一致'
+    : quoteDate !== '' && barDate !== '' && quoteDate !== barDate
+      ? `⚠ 行情日期 ${quoteDate} 与 K 线日期 ${barDate} 不一致，暂不可对账`
+      : '行情快照极值或时间不足，暂不可对账'
 
   // ── SVG assembly (string templates keep hot-path rendering cheap) ──────
   let svg = ''
@@ -428,6 +376,26 @@ function KlineChart({ detail }: { detail: StockDetailData }): JSX.Element {
     }
   }
 
+  // Extremum pills point to the actual first bar holding each plotted extreme.
+  const extremeLabel = (index: number, value: number, label: string, isLow: boolean): string => {
+    const x = xOfTime(bars[index].time, plot.left, plot.right)
+    const y = priceToY(value, scale)
+    const boxW = 86
+    const boxH = 20
+    const boxX = clamp(x - boxW / 2, plot.left + 2, plot.right - boxW - 2)
+    const boxY = isLow
+      ? clamp(y + 8, plot.top + 2, plot.bottom - boxH - 2)
+      : clamp(y - boxH - 8, plot.top + 2, plot.bottom - boxH - 2)
+    const anchorY = isLow ? boxY : boxY + boxH
+    const color = isLow ? DOWN : UP
+    return `<line x1="${x.toFixed(2)}" y1="${y.toFixed(2)}" x2="${(boxX + boxW / 2).toFixed(2)}" y2="${anchorY.toFixed(2)}" stroke="${color}" stroke-width="1" opacity=".8"/>` +
+      `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" fill="#fff" stroke="${color}" stroke-width="1.6"/>` +
+      `<rect x="${boxX.toFixed(2)}" y="${boxY.toFixed(2)}" width="${boxW}" height="${boxH}" rx="5" fill="#fff" stroke="#dfe4e8"/>` +
+      `<text x="${(boxX + boxW / 2).toFixed(2)}" y="${(boxY + 13.5).toFixed(2)}" text-anchor="middle" font-size="10" fill="#536170">${label} ${displayPrice(detail.code, detail.name, value)}</text>`
+  }
+  svg += extremeLabel(extremes.highIndex, extremes.high, '最高', false)
+  svg += extremeLabel(extremes.lowIndex, extremes.low, '最低', true)
+
   // In-progress marker for the still-forming last bar.
   if (lastInProgress && bars.length > 0) {
     const last = bars[bars.length - 1]
@@ -494,6 +462,9 @@ function KlineChart({ detail }: { detail: StockDetailData }): JSX.Element {
           }}
           dangerouslySetInnerHTML={{ __html: svg }}
         />
+      </div>
+      <div className={`${s.verifyBar} ${reconciliationWarn ? s.warn : ''}`} role="status">
+        {reconciliationText}
       </div>
       {hovered ? (
         <div className={s.ohlcChip}>
@@ -571,8 +542,14 @@ export function StockDetailPane({
   }
 
   const price = detail?.price ?? 0
-  const updown = detail && detail.yestclose > 0 ? price - detail.yestclose : 0
-  const percent = detail && detail.yestclose > 0 ? (updown / detail.yestclose) * 100 : 0
+  const hasValidPrice = validPrice(price)
+  const updownRaw = detail && hasValidPrice && validPrice(detail.yestclose) ? price - detail.yestclose : null
+  const updown = updownRaw != null && Number.isFinite(updownRaw) ? updownRaw : null
+  const percentRaw = updown !== null && detail && validPrice(detail.yestclose)
+    ? (updown / detail.yestclose) * 100
+    : null
+  const percent = percentRaw != null && Number.isFinite(percentRaw) ? percentRaw : null
+  const priceTone = percent == null ? '' : percent > 0.005 ? ` ${s.toneUp}` : percent < -0.005 ? ` ${s.toneDown}` : ''
   const status = marketStatus(detail?.time ?? '')
 
   return (
@@ -584,12 +561,14 @@ export function StockDetailPane({
             <span className={s.paneCode}>{code.toUpperCase()}</span>
           </div>
           {detail ? (
-            <div className={s.panePrice + (percent > 0.005 ? ` ${s.toneUp}` : percent < -0.005 ? ` ${s.toneDown}` : '')}>
-              {displayPrice(code, name, price)}
-              <span className={s.paneChange}>
-                {updown >= 0 ? '+' : ''}
-                {displayPrice(code, name, updown)} / {formatPercent(percent)}
-              </span>
+            <div className={s.panePrice + priceTone}>
+              {hasValidPrice ? displayPrice(code, name, price) : '--'}
+              {updown !== null && percent !== null ? (
+                <span className={s.paneChange}>
+                  {updown >= 0 ? '+' : ''}
+                  {displayPrice(code, name, updown)} / {formatPercent(percent)}
+                </span>
+              ) : null}
             </div>
           ) : (
             <div className={s.panePrice}>--</div>

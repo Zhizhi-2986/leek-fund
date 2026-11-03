@@ -128,8 +128,8 @@ describe('parseTencentDailyRows', () => {
       ['2026-08-02', '10.20', '10.10', '10.25', '9.95', '67890'],
     ]
     assert.deepEqual(parseTencentDailyRows(rows), [
-      { date: '2026-08-01', high: 10.3, low: 9.9 },
-      { date: '2026-08-02', high: 10.25, low: 9.95 },
+      { date: '2026-08-01', close: 10.2, high: 10.3, low: 9.9 },
+      { date: '2026-08-02', close: 10.1, high: 10.25, low: 9.95 },
     ])
   })
 
@@ -137,6 +137,8 @@ describe('parseTencentDailyRows', () => {
     const rows = [
       ['bad-date', '1', '2', '3', '4', '5'],
       ['2026-08-02', '1', '2', '0', '4', '5'], // high = 0
+      ['2026-08-02', '1', '0', '3', '2', '5'], // close = 0
+      ['2026-08-02', '1', 'Infinity', '3', '2', '5'], // non-finite close
       'not-an-array',
       ['2026-08-02'], // too short
     ]
@@ -151,13 +153,13 @@ describe('parseEastmoneyDailyLines', () => {
       '2026-08-02,10.20,10.10,10.25,9.95,67890,678901234.00',
     ]
     assert.deepEqual(parseEastmoneyDailyLines(lines), [
-      { date: '2026-08-01', high: 10.3, low: 9.9 },
-      { date: '2026-08-02', high: 10.25, low: 9.95 },
+      { date: '2026-08-01', close: 10.2, high: 10.3, low: 9.9 },
+      { date: '2026-08-02', close: 10.1, high: 10.25, low: 9.95 },
     ])
   })
 
   it('skips malformed lines', () => {
-    assert.deepEqual(parseEastmoneyDailyLines(['2026-08-02,1,2', 'garbage']), [])
+    assert.deepEqual(parseEastmoneyDailyLines(['2026-08-02,1,2', '2026-08-02,1,Infinity,3,2', 'garbage']), [])
   })
 })
 
@@ -175,7 +177,7 @@ describe('chinaDateString', () => {
 
 describe('referencePrices', () => {
   const daily = (dates: string[]) =>
-    dates.map((date, index) => ({ date, high: 10 + index, low: 8 + index }))
+    dates.map((date, index) => ({ date, close: 9 + index, high: 10 + index, low: 8 + index }))
 
   it('uses the latest bar as 昨日 when today has no bar (weekend/holiday)', () => {
     const bars = daily(['2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30'])
@@ -252,7 +254,7 @@ describe('fetchDailyKline (network mocked)', () => {
     try {
       const bars = await fetchDailyKline('sh600000', 60, 500)
       assert.equal(bars.length, 2)
-      assert.deepEqual(bars[0], { date: '2026-08-01', high: 10.3, low: 9.9 })
+      assert.deepEqual(bars[0], { date: '2026-08-01', close: 10.2, high: 10.3, low: 9.9 })
     } finally {
       restore()
     }
@@ -327,6 +329,103 @@ describe('fetchStockDetail (network mocked)', () => {
       assert.equal(detail.high60, 10.35) // today's partial bar included
       assert.equal(detail.low60, 9.9)
       assert.equal(detail.code, 'sh600000')
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it('uses a same-day live quote and the fifth prior trading close for return5', async () => {
+    const today = chinaDateString()
+    const dates = Array.from({ length: 22 }, (_, index) =>
+      chinaDateString(Date.now() - (21 - index) * 86_400_000)
+    )
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      let data: unknown
+      if (url.includes('mkline')) {
+        const qt = new Array(50).fill('0') as string[]
+        qt[1] = '浦发银行'
+        data = {
+          code: 0,
+          data: {
+            sh600000: {
+              qt: { sh600000: qt },
+              m5: [[`${today.replaceAll('-', '')}0935`, '31', '32', '32.5', '30.5', '100']],
+            },
+          },
+        }
+      } else if (url.includes('fqkline')) {
+        data = {
+          code: 0,
+          data: {
+            sh600000: {
+              qfqday: dates.map((date, index) => [date, String(10 + index), String(10 + index), String(10.5 + index), String(9.5 + index), '1']),
+            },
+          },
+        }
+      }
+      if (data === undefined) throw new Error(`unexpected fetch: ${url}`)
+      const bytes = new TextEncoder().encode(JSON.stringify(data))
+      return { ok: true, arrayBuffer: async () => bytes.buffer as ArrayBuffer } as unknown as Response
+    }) as typeof fetch
+    try {
+      const detail = await fetchStockDetail('sh600000', {
+        code: 'sh600000', name: '浦发银行', price: 33, yestclose: 31, open: 31,
+        high: 34, low: 30, updown: 2, percent: 6.45, time: `${today} 10:00:00`, available: true,
+      })
+      assert.equal(detail.price, 33)
+      assert.equal(detail.snapshotHigh, 34)
+      assert.equal(detail.snapshotLow, 30)
+      assert.equal(detail.volumeFromBars, true)
+      assert.ok(Math.abs((detail.return5 ?? 0) - ((33 / 26 - 1) * 100)) < 1e-10)
+      assert.ok(Math.abs((detail.return20 ?? 0) - 200) < 1e-10)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it('keeps the snapshot volume/amount apart from the bar fallback', async () => {
+    const today = chinaDateString()
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      let data: unknown
+      if (url.includes('mkline')) {
+        const qt = new Array(50).fill('0') as string[]
+        qt[1] = '浦发银行'
+        qt[36] = '5000' // 成交量（手）
+        qt[37] = '1000' // 成交额（万元）
+        data = {
+          code: 0,
+          data: {
+            sh600000: {
+              qt: { sh600000: qt },
+              m5: [[`${today.replaceAll('-', '')}0935`, '21', '22', '22.5', '20.5', '100']],
+            },
+          },
+        }
+      } else if (url.includes('fqkline')) {
+        data = {
+          code: 0,
+          data: {
+            sh600000: {
+              qfqday: [
+                [today, '21', '22', '22.5', '20.5', '1'],
+              ],
+            },
+          },
+        }
+      }
+      if (data === undefined) throw new Error(`unexpected fetch: ${url}`)
+      const bytes = new TextEncoder().encode(JSON.stringify(data))
+      return { ok: true, arrayBuffer: async () => bytes.buffer as ArrayBuffer } as unknown as Response
+    }) as typeof fetch
+    try {
+      const detail = await fetchStockDetail('sh600000', undefined)
+      assert.equal(detail.volume, 5000) // snapshot figure, not the 100-hand bar sum
+      assert.equal(detail.amount, 1e7) // 1000 万元 → 元
+      assert.equal(detail.volumeFromBars, false)
     } finally {
       globalThis.fetch = original
     }

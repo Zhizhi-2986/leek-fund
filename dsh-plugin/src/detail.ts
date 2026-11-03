@@ -1,6 +1,6 @@
 /**
- * Stock detail data for the LeekFund tab: 5-minute candlestick chart (SVG),
- * today's open/high/low, and MA5–MA60 as 5-minute-close SMAs.
+ * Stock detail data for the LeekFund tab: daily metrics, 5-minute candles,
+ * and MA5–MA60 as 5-minute-close SMAs.
  *
  * Data sources (priority order):
  *   1. Tencent 5-min K-line API (ifzq.gtimg.cn/appstock/app/kline/mkline) —
@@ -9,6 +9,7 @@
  *   2. Eastmoney (push2his.eastmoney.com, klt=5) — fallback when Tencent is
  *      unavailable or returns empty data.
  */
+import { calcPeriodReturn } from './daily-math.js'
 import type { Quote } from './types.js'
 
 const TENCENT_MKLINE_URL = 'https://ifzq.gtimg.cn/appstock/app/kline/mkline'
@@ -23,7 +24,7 @@ const EASTMONEY_KLINE_URL = 'https://push2his.eastmoney.com/api/qt/stock/kline/g
 const M5_BAR_COUNT = 160
 
 /**
- * How many daily bars to request for the 60-trading-day high/low reference.
+ * How many daily bars to request for the 60-day range and 5/20-session returns.
  * `lmt=60` on the daily endpoints returns exactly the latest 60 trading days
  * (non-trading days are not part of the series).
  */
@@ -45,10 +46,12 @@ export interface KlineBar {
   completed: boolean
 }
 
-/** One daily K-line bar (only the fields needed for reference prices). */
+/** One daily K-line bar (front-adjusted close and high/low references). */
 export interface DailyBar {
   /** YYYY-MM-DD */
   date: string
+  /** 前复权收盘价 */
+  close: number
   /** 当日最高 */
   high: number
   /** 当日最低 */
@@ -62,6 +65,9 @@ export interface StockDetail {
   open: number
   high: number
   low: number
+  /** Snapshot-provided extremes (0 when unavailable), retained for honest K-line reconciliation. */
+  snapshotHigh: number
+  snapshotLow: number
   yestclose: number
   limitUp: number
   limitDown: number
@@ -87,6 +93,8 @@ export interface StockDetail {
   volumeRatio: number
   /** 今日成交量（手，含当前未收盘桶） */
   volume: number
+  /** 成交量是否回退为 K 线桶合计（与快照成交额不可保证同时点）。 */
+  volumeFromBars: boolean
   /** 今日成交额（元） */
   amount: number
   /** 今日换手率（%） */
@@ -99,6 +107,10 @@ export interface StockDetail {
   high60: number
   /** 近 60 个交易日最低价（含当前交易日，0 = 无数据） */
   low60: number
+  /** 近 5 个有效交易日收益率（百分比）；历史不足或不可比时为 null。 */
+  return5: number | null
+  /** 近 20 个有效交易日收益率（百分比）；历史不足或不可比时为 null。 */
+  return20: number | null
 }
 
 // ── Low-level fetch helpers ────────────────────────────────────────────
@@ -415,10 +427,12 @@ export function parseTencentDailyRows(rows: unknown[]): DailyBar[] {
   for (const raw of rows) {
     if (!Array.isArray(raw) || raw.length < 5) continue
     const date = String(raw[0] ?? '')
+    const close = Number(raw[2]) || 0
     const high = Number(raw[3]) || 0
     const low = Number(raw[4]) || 0
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || high <= 0 || low <= 0) continue
-    bars.push({ date, high, low })
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(close) || !Number.isFinite(high) ||
+      !Number.isFinite(low) || close <= 0 || high <= 0 || low <= 0) continue
+    bars.push({ date, close, high, low })
   }
   return bars
 }
@@ -433,10 +447,12 @@ export function parseEastmoneyDailyLines(lines: string[]): DailyBar[] {
     const parts = line.split(',')
     if (parts.length < 5) continue
     const date = parts[0]
+    const close = Number(parts[2]) || 0
     const high = Number(parts[3]) || 0
     const low = Number(parts[4]) || 0
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || high <= 0 || low <= 0) continue
-    bars.push({ date, high, low })
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(close) || !Number.isFinite(high) ||
+      !Number.isFinite(low) || close <= 0 || high <= 0 || low <= 0) continue
+    bars.push({ date, close, high, low })
   }
   return bars
 }
@@ -601,29 +617,52 @@ export async function fetchStockDetail(
     .filter((bar) => bar.date !== kline5.at(-1)?.date)
     .map((bar) => bar.close)
   const latest = kline5.at(-1)?.close ?? quote?.price ?? 0
+  const currentQuotePrice = quote && quote.available && Number.isFinite(quote.price) && quote.price > 0
+    ? quote.price
+    : latest
   const closes = [...warmupCloses, ...kline5.map((bar) => bar.close)]
+
+  // For a quote timestamped today, compare its live price with closes before
+  // today's daily bar. Outside today's quote session, use the latest daily
+  // close as P_t and exclude that bar from the prior-close window.
+  const currentDate = chinaDateString()
+  const quoteDate = quote?.time.slice(0, 10) ?? ''
+  const hasCurrentQuote = currentQuotePrice > 0 && quoteDate === currentDate
+  const latestDaily = daily.at(-1)
+  const periodPrice = hasCurrentQuote ? currentQuotePrice : latestDaily?.close ?? currentQuotePrice
+  const previousDailyBars = hasCurrentQuote
+    ? latestDaily?.date === currentDate ? daily.slice(0, -1) : daily
+    : latestDaily ? daily.slice(0, -1) : []
+  const previousCloses = previousDailyBars.map((bar) => bar.close)
+  const return5 = calcPeriodReturn(periodPrice, previousCloses, 5)
+  const return20 = calcPeriodReturn(periodPrice, previousCloses, 20)
 
   // High/low: prefer Sina quote (reflects day's true range), fall back to
   // the 5-min K-line range.
   const highs = kline5.map((bar) => bar.high)
   const lows = kline5.map((bar) => bar.low)
-  const high = quote?.high && quote.high > 0 ? quote.high : (highs.length > 0 ? Math.max(...highs) : 0)
-  const low = quote?.low && quote.low > 0 ? quote.low : (lows.length > 0 ? Math.min(...lows) : 0)
+  const snapshotHigh = quote?.available && Number.isFinite(quote.high) && quote.high > 0 ? quote.high : 0
+  const snapshotLow = quote?.available && Number.isFinite(quote.low) && quote.low > 0 ? quote.low : 0
+  const high = snapshotHigh || (highs.length > 0 ? Math.max(...highs) : 0)
+  const low = snapshotLow || (lows.length > 0 ? Math.min(...lows) : 0)
 
   // 成交量: prefer the realtime snapshot figure (includes auction prints);
   // fall back to the sum of today's 5-minute bars when the snapshot lacks it.
-  const volume =
-    extras.volume > 0 ? extras.volume : kline5.reduce((sum, bar) => sum + bar.volume, 0)
+  const hasSnapshotVolume = Number.isFinite(extras.volume) && extras.volume > 0
+  const volumeFromBars = !hasSnapshotVolume
+  const volume = hasSnapshotVolume ? extras.volume : kline5.reduce((sum, bar) => sum + bar.volume, 0)
 
   const refs = referencePrices(daily, chinaDateString())
 
   return {
     code,
     name: name || quote?.name || code,
-    price: latest,
+    price: currentQuotePrice,
     open: tencent.open || quote?.open || 0,
     high,
     low,
+    snapshotHigh,
+    snapshotLow,
     yestclose,
     limitUp,
     limitDown,
@@ -640,12 +679,15 @@ export async function fetchStockDetail(
     circulatingMarketCap: extras.circulatingMarketCap,
     volumeRatio: extras.volumeRatio,
     volume,
+    volumeFromBars,
     amount: extras.amount,
     turnoverRate: extras.turnoverRate,
     yestHigh: refs.yestHigh,
     yestLow: refs.yestLow,
     high60: refs.high60,
     low60: refs.low60,
+    return5,
+    return20,
   }
 }
 
