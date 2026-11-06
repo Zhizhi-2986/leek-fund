@@ -8,8 +8,9 @@
  *   axis tick sets and yestclose/limit references all use the single
  *   `priceToY` mapping from `kline-math.ts`, so a bar's true high/low can
  *   never be clipped while a tick at the same price sits inside the plot.
- *   Extremum labels are anchored to real bars; quote differences are reported
- *   only for matching trading dates and never alter candle OHLC.
+ *   Candle wicks show each bar's true high/low; no extremum labels or
+ *   quote-snapshot reconciliation prompts are drawn (per the hide-extremes
+ *   spec).
  *
  * The last, still-forming bar is flagged 进行中 based on `bar.completed`
  * (derived server-side from the exchange clock).
@@ -20,7 +21,6 @@ import { displayPrice, formatPercent } from '../quote.js'
 import {
   barExtremes,
   buildPriceScale,
-  extremeMismatch,
   maSeries,
   priceToY,
   tickDigitsFor,
@@ -267,29 +267,6 @@ function KlineChart({ detail }: { detail: StockDetailData }): JSX.Element {
   const yestcloseY = priceToY(detail.yestclose, scale)
   const lastInProgress = !bars[bars.length - 1].completed
   const hovered = hoverIndex !== null && bars[hoverIndex] ? bars[hoverIndex] : null
-  const quoteDate = detail.time.slice(0, 10)
-  const barDate = bars[bars.length - 1]?.date ?? ''
-  const quoteHigh = detail.snapshotHigh ?? 0
-  const quoteLow = detail.snapshotLow ?? 0
-  const hasQuoteExtremes = validPrice(quoteHigh) || validPrice(quoteLow)
-  const canReconcile = quoteDate !== '' && quoteDate === barDate && hasQuoteExtremes
-  const mismatch = canReconcile
-    ? extremeMismatch(extremes.low, extremes.high, quoteLow, quoteHigh, tick)
-    : null
-  const mismatchParts = mismatch
-    ? [
-        mismatch.lowMismatch ? `行情最低 ${fmtPrice(detail, quoteLow)}，K 线最低 ${fmtPrice(detail, extremes.low)}` : '',
-        mismatch.highMismatch ? `行情最高 ${fmtPrice(detail, quoteHigh)}，K 线最高 ${fmtPrice(detail, extremes.high)}` : '',
-      ].filter(Boolean)
-    : []
-  const reconciliationWarn = mismatchParts.length > 0 || (quoteDate !== '' && barDate !== '' && quoteDate !== barDate)
-  const reconciliationText = canReconcile
-    ? mismatchParts.length > 0
-      ? `⚠ 快照与 K 线极值不同（不补造影线）：${mismatchParts.join('；')}`
-      : '✓ 快照已提供的高低价与 K 线极值一致'
-    : quoteDate !== '' && barDate !== '' && quoteDate !== barDate
-      ? `⚠ 行情日期 ${quoteDate} 与 K 线日期 ${barDate} 不一致，暂不可对账`
-      : '行情快照极值或时间不足，暂不可对账'
 
   // ── SVG assembly (string templates keep hot-path rendering cheap) ──────
   let svg = ''
@@ -376,26 +353,6 @@ function KlineChart({ detail }: { detail: StockDetailData }): JSX.Element {
     }
   }
 
-  // Extremum pills point to the actual first bar holding each plotted extreme.
-  const extremeLabel = (index: number, value: number, label: string, isLow: boolean): string => {
-    const x = xOfTime(bars[index].time, plot.left, plot.right)
-    const y = priceToY(value, scale)
-    const boxW = 86
-    const boxH = 20
-    const boxX = clamp(x - boxW / 2, plot.left + 2, plot.right - boxW - 2)
-    const boxY = isLow
-      ? clamp(y + 8, plot.top + 2, plot.bottom - boxH - 2)
-      : clamp(y - boxH - 8, plot.top + 2, plot.bottom - boxH - 2)
-    const anchorY = isLow ? boxY : boxY + boxH
-    const color = isLow ? DOWN : UP
-    return `<line x1="${x.toFixed(2)}" y1="${y.toFixed(2)}" x2="${(boxX + boxW / 2).toFixed(2)}" y2="${anchorY.toFixed(2)}" stroke="${color}" stroke-width="1" opacity=".8"/>` +
-      `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3" fill="#fff" stroke="${color}" stroke-width="1.6"/>` +
-      `<rect x="${boxX.toFixed(2)}" y="${boxY.toFixed(2)}" width="${boxW}" height="${boxH}" rx="5" fill="#fff" stroke="#dfe4e8"/>` +
-      `<text x="${(boxX + boxW / 2).toFixed(2)}" y="${(boxY + 13.5).toFixed(2)}" text-anchor="middle" font-size="10" fill="#536170">${label} ${displayPrice(detail.code, detail.name, value)}</text>`
-  }
-  svg += extremeLabel(extremes.highIndex, extremes.high, '最高', false)
-  svg += extremeLabel(extremes.lowIndex, extremes.low, '最低', true)
-
   // In-progress marker for the still-forming last bar.
   if (lastInProgress && bars.length > 0) {
     const last = bars[bars.length - 1]
@@ -462,9 +419,6 @@ function KlineChart({ detail }: { detail: StockDetailData }): JSX.Element {
           }}
           dangerouslySetInnerHTML={{ __html: svg }}
         />
-      </div>
-      <div className={`${s.verifyBar} ${reconciliationWarn ? s.warn : ''}`} role="status">
-        {reconciliationText}
       </div>
       {hovered ? (
         <div className={s.ohlcChip}>

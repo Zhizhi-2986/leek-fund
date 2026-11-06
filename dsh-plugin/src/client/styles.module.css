@@ -609,8 +609,6 @@
 .stageDistances { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-left: 14px; border-left: 1px solid #eef0f3; }
 .stageDistances > div { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .stageDistances b { font-size: 15px; font-variant-numeric: tabular-nums; }
-.verifyBar { margin-top: 7px; padding: 7px 10px; border: 1px solid #e8edf1; border-radius: 7px; color: #75818e; background: #f8f9fa; font-size: 11px; line-height: 1.45; }
-.verifyBar.warn { border-color: #ead7bd; color: #9b631f; background: #fbf7f0; }
 @media (max-width: 1259px) {
   .dailySplit { grid-template-columns: minmax(0, 1fr); }
   .stageGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
