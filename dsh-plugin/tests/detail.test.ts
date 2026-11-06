@@ -329,6 +329,9 @@ describe('fetchStockDetail (network mocked)', () => {
       assert.equal(detail.high60, 10.35) // today's partial bar included
       assert.equal(detail.low60, 9.9)
       assert.equal(detail.code, 'sh600000')
+      // No live quote → dailyMA series is the settled daily closes
+      // [10.00, 10.00, 10.30], too short for any period: all null.
+      assert.deepEqual(detail.dailyMA, { ma5: null, ma10: null, ma20: null, ma30: null, ma60: null })
     } finally {
       globalThis.fetch = original
     }
@@ -380,6 +383,12 @@ describe('fetchStockDetail (network mocked)', () => {
       assert.equal(detail.volumeFromBars, true)
       assert.ok(Math.abs((detail.return5 ?? 0) - ((33 / 26 - 1) * 100)) < 1e-10)
       assert.ok(Math.abs((detail.return20 ?? 0) - 200) < 1e-10)
+      // Live quote → dailyMA series = daily closes 10..30 + current price 33.
+      assert.equal(detail.dailyMA.ma5, 29.4) // 27+28+29+30+33 / 5
+      assert.equal(detail.dailyMA.ma10, 26.7) // 22..30,33 / 10
+      assert.equal(detail.dailyMA.ma20, 21.6) // 12..30,33 / 20
+      assert.equal(detail.dailyMA.ma30, null) // 22 closes < 30
+      assert.equal(detail.dailyMA.ma60, null)
     } finally {
       globalThis.fetch = original
     }
@@ -426,6 +435,54 @@ describe('fetchStockDetail (network mocked)', () => {
       assert.equal(detail.volume, 5000) // snapshot figure, not the 100-hand bar sum
       assert.equal(detail.amount, 1e7) // 1000 万元 → 元
       assert.equal(detail.volumeFromBars, false)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it('computes dailyMA from settled closes when there is no live same-day quote', async () => {
+    const dates = Array.from({ length: 65 }, (_, index) =>
+      chinaDateString(Date.now() - (64 - index) * 86_400_000)
+    )
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      let data: unknown
+      if (url.includes('mkline')) {
+        const qt = new Array(50).fill('0') as string[]
+        qt[1] = '浦发银行'
+        data = {
+          code: 0,
+          data: {
+            sh600000: {
+              qt: { sh600000: qt },
+              m5: [[`${dates[64].replaceAll('-', '')}0935`, '50', '51', '52', '49', '100']],
+            },
+          },
+        }
+      } else if (url.includes('fqkline')) {
+        data = {
+          code: 0,
+          data: {
+            sh600000: {
+              qfqday: dates.map((date, index) => [date, String(1 + index), String(1 + index), String(2 + index), String(index), '1']),
+            },
+          },
+        }
+      }
+      if (data === undefined) throw new Error(`unexpected fetch: ${url}`)
+      const bytes = new TextEncoder().encode(JSON.stringify(data))
+      return { ok: true, arrayBuffer: async () => bytes.buffer as ArrayBuffer } as unknown as Response
+    }) as typeof fetch
+    try {
+      const detail = await fetchStockDetail('sh600000', undefined)
+      // No live quote → series = all 65 settled closes (1..65); periodPrice is
+      // the latest daily close, so the series ends at 65 exactly once.
+      assert.equal(detail.dailyMA.ma5, 63) // 61..65
+      assert.equal(detail.dailyMA.ma10, 60.5) // 56..65
+      assert.equal(detail.dailyMA.ma20, 55.5) // 46..65
+      assert.equal(detail.dailyMA.ma30, 50.5) // 36..65
+      assert.equal(detail.dailyMA.ma60, 35.5) // 6..65
     } finally {
       globalThis.fetch = original
     }

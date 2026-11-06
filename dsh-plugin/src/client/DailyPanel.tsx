@@ -177,6 +177,37 @@ function StageCard({ detail }: { detail: StockDetailData }): JSX.Element {
   )
 }
 
+// ── Daily MA chips (daily-line MAs; distinct from the K-line view's 5-min) ─
+
+const MA_PERIODS = [5, 10, 20, 30, 60] as const
+const MA_COLORS: Record<number, string> = {
+  5: '#d1a03c',
+  10: '#7092d8',
+  20: '#b27acc',
+  30: '#84939f',
+  60: '#399d9e',
+}
+
+function MaCard({ detail }: { detail: StockDetailData }): JSX.Element {
+  return (
+    <section className={s.dailyCard}>
+      <h2 className={s.dailyTitle}>均线（日线）</h2>
+      <div className={s.maRow}>
+        {MA_PERIODS.map((period) => {
+          const value = detail.dailyMA?.[`ma${period}`]
+          return (
+            <span key={period}>
+              <i style={{ background: MA_COLORS[period] }} />
+              MA{period}{' '}
+              <b>{value != null && Number.isFinite(value) && value > 0 ? fmtPrice(detail, value) : '--'}</b>
+            </span>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 export function DailyPanel({ detail }: { detail: StockDetailData }): JSX.Element {
   const cells = [
     { label: '今开', value: detail.open },
@@ -201,6 +232,7 @@ export function DailyPanel({ detail }: { detail: StockDetailData }): JSX.Element
           ))}
         </div>
       </section>
+      <MaCard detail={detail} />
       <div className={s.dailySplit}>
         <RangeCard detail={detail} />
         <TradeCard detail={detail} />

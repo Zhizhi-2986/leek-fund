@@ -1,6 +1,7 @@
 /**
  * Stock detail data for the LeekFund tab: daily metrics, 5-minute candles,
- * and MA5–MA60 as 5-minute-close SMAs.
+ * 5-minute-close SMAs (K-line view) and daily MA5–MA60 over front-adjusted
+ * daily closes (daily panel).
  *
  * Data sources (priority order):
  *   1. Tencent 5-min K-line API (ifzq.gtimg.cn/appstock/app/kline/mkline) —
@@ -81,6 +82,19 @@ export interface StockDetail {
    */
   klineWarmup: number[]
   ma: {
+    ma5: number | null
+    ma10: number | null
+    ma20: number | null
+    ma30: number | null
+    ma60: number | null
+  }
+  /**
+   * Daily-line MAs (5/10/20/30/60) over front-adjusted daily closes. Uses the
+   * same window as return5/return20: during a live same-day quote session the
+   * current price stands in for today's close; otherwise the series ends at
+   * the latest settled daily close. Null when the series is too short.
+   */
+  dailyMA: {
     ma5: number | null
     ma10: number | null
     ma20: number | null
@@ -637,6 +651,18 @@ export async function fetchStockDetail(
   const return5 = calcPeriodReturn(periodPrice, previousCloses, 5)
   const return20 = calcPeriodReturn(periodPrice, previousCloses, 20)
 
+  // Daily-line MAs share the return/20 window: the closing series ends at the
+  // current price during a live session (industry convention for intraday MA),
+  // or at the latest settled daily close otherwise — reusing `periodPrice`.
+  const dailyCloses = [...previousDailyBars.map((bar) => bar.close), periodPrice]
+  const dailyMA = {
+    ma5: calcMA(dailyCloses, 5),
+    ma10: calcMA(dailyCloses, 10),
+    ma20: calcMA(dailyCloses, 20),
+    ma30: calcMA(dailyCloses, 30),
+    ma60: calcMA(dailyCloses, 60),
+  }
+
   // High/low: prefer Sina quote (reflects day's true range), fall back to
   // the 5-min K-line range.
   const highs = kline5.map((bar) => bar.high)
@@ -676,6 +702,7 @@ export async function fetchStockDetail(
       ma30: calcMA(closes, 30),
       ma60: calcMA(closes, 60),
     },
+    dailyMA,
     circulatingMarketCap: extras.circulatingMarketCap,
     volumeRatio: extras.volumeRatio,
     volume,

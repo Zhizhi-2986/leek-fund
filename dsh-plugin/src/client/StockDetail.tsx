@@ -87,6 +87,14 @@ export interface StockDetailData {
     ma30: number | null
     ma60: number | null
   }
+  /** 日线均线（前复权日 K 收盘；盘中以现价作为今日值）。 */
+  dailyMA: {
+    ma5: number | null
+    ma10: number | null
+    ma20: number | null
+    ma30: number | null
+    ma60: number | null
+  }
 }
 
 export type DetailViewMode = 'daily' | 'kline'
