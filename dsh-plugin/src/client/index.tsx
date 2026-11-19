@@ -20,6 +20,8 @@ import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { QuotesIcon } from './icons.js'
@@ -93,6 +95,7 @@ function quotesDefinition(): SidebarRightTabDefinition {
     priority: 'extension',
     title: () => '行情',
     guide: [{
+      id: ID,
       order: 60,
       title: () => '行情',
       description: () => 'A 股自选、分组与实时行情',

@@ -9,12 +9,12 @@ LeekFund 股票行情工具集 —— DeepSeek Harness（DSH）插件。
 ### 作为 bundle 安装（推荐）
 
 ```sh
-# 从仓库根目录
-dsh plugin --profile <name> add ./dsh-plugin
+# 从 npm 安装
+dsh plugin --profile <name> add dsh-leek-fund
 dsh --profile <name>
 ```
 
-`dsh plugin add` 会通过 pnpm 链接本目录，并将 `dsh-leek-fund` 追加到 profile 的 `dsh.profile.bundles` 列表。卸载：
+`dsh plugin add` 会安装 npm 包，并将 `dsh-leek-fund` 追加到 profile 的 `dsh.profile.bundles` 列表。卸载：
 
 ```sh
 dsh plugin --profile <name> remove dsh-leek-fund
@@ -28,7 +28,7 @@ dsh plugin --profile <name> remove dsh-leek-fund
 cd dsh-plugin
 npm run bundle                     # tsdown -> lib/index.js（host）+ lib/client.js（浏览器端）
 
-dsh web --patch /绝对路径/leek-fund/dsh-plugin/cordis.dev.yml
+dsh web --patch /绝对路径/dsh-fund-workbench/dsh-plugin/cordis.dev.yml
 ```
 
 两个容易踩的点：
@@ -36,7 +36,7 @@ dsh web --patch /绝对路径/leek-fund/dsh-plugin/cordis.dev.yml
 - `--patch` 必须写在 `web`（或 `--profile <name>`）之后、在透传给 app 的参数（`--port`、`--no-open` …）**之前**——`web` 子命令开了 `passThroughOptions`，一旦出现 `--port` 这类参数，后面的 `--patch` 就不再被解析（报 `unknown option '--patch'`）。正确写法：`dsh web --patch <file> --port 3199`。
 - **客户端 bundle 始终取自 `lib/client.js`**，所以改动 `src/client/**` 后必须重新 `npm run bundle`；改 host 源码若想免构建，可以从 `src/index.ts` 直接加载，但 `src/**` 里的 `import './api.js'` 是 ESM `.js` 说明符指向 `.ts` 源文件，Node 自身解析不了，需要 tsx 加载器：仓库根的 `pnpm dsh`（`node --import tsx/esm apps/cli/src/bin.ts`）已预载；用已发布的 `dsh` CLI 则写 `NODE_OPTIONS="--import tsx" dsh web --patch <指向 src/index.ts 的 patch>`（缺 tsx 时会以 `Cannot find module '.../src/api.js'` 启动失败）。
 
-`npm run build` 会先跑 `tsc -p tsconfig.build.json` 产出 `lib/types/**`，仓库内任何类型错误都会让它在中途退出；只要 bundle 时用 `npm run bundle` 即可绕过。
+`npm run build` 会先生成 `lib/types/**` 类型声明，再构建宿主和客户端 bundle。
 
 ## 配置
 
@@ -82,13 +82,13 @@ dsh web --patch /绝对路径/leek-fund/dsh-plugin/cordis.dev.yml
 
 ```sh
 cd dsh-plugin
-npm install        # 安装 typescript / tsx / @types/node
+npm install        # 安装构建所需依赖
 npm run typecheck  # tsc --noEmit
 npm test           # node --test
 npm run build      # tsc -> lib/
 ```
 
-`@deepseek-ai/*` 为 DSH 内置包（peerDependencies），开发时从 DSH 安装目录解析；未安装 DSH 时，将 DSH 安装的 `$DSH_HOME/profiles/node_modules/@deepseek-ai` 符号链接到 `dsh-plugin/node_modules/@deepseek-ai` 即可本地开发。
+构建所需的 DSH 类型包已声明为开发依赖；运行时由 DSH 宿主提供 peerDependencies。
 
 ## 行情 Tab
 

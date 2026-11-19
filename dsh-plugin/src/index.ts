@@ -7,7 +7,7 @@
  * state file.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { handleApiRequest, isTrustedApiRequest, writeJson, type ApiDeps } from './api.js'
 import { alertPath, createAlertStore, startAlertMonitor } from './alerts.js'
@@ -36,10 +36,10 @@ export interface Config {
    * Where the「行情」tab is registered: the official right Sidebar (default) or
    * the session workspace tab bar (the row with「对话」「上下文」「文件」).
    */
-  location?: 'sidebar' | 'workspace'
+  location?: Volatile<'sidebar' | 'workspace'>
 }
 
-export const Config: Schema<Config> = Schema.object({
+export const Config: ReturnType<typeof Schema.object> = Schema.object({
   timeoutMs: Schema.number().default(8000),
   location: Schema.union([
     Schema.const('sidebar').description('侧边栏（右侧栏 Tab）'),
