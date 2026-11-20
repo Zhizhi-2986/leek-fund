@@ -34,7 +34,7 @@ dsh web --patch /绝对路径/dsh-fund-workbench/dsh-plugin/cordis.dev.yml
 两个容易踩的点：
 
 - `--patch` 必须写在 `web`（或 `--profile <name>`）之后、在透传给 app 的参数（`--port`、`--no-open` …）**之前**——`web` 子命令开了 `passThroughOptions`，一旦出现 `--port` 这类参数，后面的 `--patch` 就不再被解析（报 `unknown option '--patch'`）。正确写法：`dsh web --patch <file> --port 3199`。
-- **客户端 bundle 始终取自 `lib/client.js`**，所以改动 `src/client/**` 后必须重新 `npm run bundle`；改 host 源码若想免构建，可以从 `src/index.ts` 直接加载，但 `src/**` 里的 `import './api.js'` 是 ESM `.js` 说明符指向 `.ts` 源文件，Node 自身解析不了，需要 tsx 加载器：仓库根的 `pnpm dsh`（`node --import tsx/esm apps/cli/src/bin.ts`）已预载；用已发布的 `dsh` CLI 则写 `NODE_OPTIONS="--import tsx" dsh web --patch <指向 src/index.ts 的 patch>`（缺 tsx 时会以 `Cannot find module '.../src/api.js'` 启动失败）。
+- **客户端 bundle 始终取自 `lib/client.js`**，所以改动 `src/client/**` 后必须重新 `npm run bundle`；改 host 源码若想免构建，可以从 `src/index.ts` 直接加载，但 `src/**` 里的 `import './api.js'` 是 ESM `.js` 说明符指向 `.ts` 源文件，Node 自身解析不了，需要 tsx 加载器。使用已发布的 `dsh` CLI 时可写 `NODE_OPTIONS="--import tsx" dsh web --patch <指向 src/index.ts 的 patch>`（缺 tsx 时会以 `Cannot find module '.../src/api.js'` 启动失败）。
 
 `npm run build` 会先生成 `lib/types/**` 类型声明，再构建宿主和客户端 bundle。
 
